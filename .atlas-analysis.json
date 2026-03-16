@@ -1,0 +1,141 @@
+{
+  "projectType": "saas",
+  "projectName": "Rotations",
+  "projectDescription": "A music player built from first principles with hand-curated rotations and listening graph visualization",
+  "theme": "almond",
+  "primaryColor": "#8B5CF6",
+  "lightColor": "#A78BFA",
+  "darkColor": "#6D28D9",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/rotations",
+              "concepts/listening-graph",
+              "concepts/music-sources"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "features/music-player",
+              "features/playlists",
+              "features/graph-visualization",
+              "features/offline-mode"
+            ]
+          },
+          {
+            "group": "Music Sources",
+            "pages": [
+              "sources/bandcamp",
+              "sources/spotify",
+              "sources/youtube",
+              "sources/lastfm"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Developer Guide",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "developers/setup",
+              "developers/architecture",
+              "developers/project-structure"
+            ]
+          },
+          {
+            "group": "Components",
+            "pages": [
+              "developers/music-player",
+              "developers/graph-server",
+              "developers/graph-frontend"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "developers/local-development",
+              "developers/testing",
+              "developers/deployment"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Graph API",
+            "pages": [
+              "api/graph/get-graph",
+              "api/graph/get-node",
+              "api/graph/get-neighbors",
+              "api/graph/get-stats",
+              "api/graph/get-analysis",
+              "api/graph/get-path"
+            ]
+          },
+          {
+            "group": "Pipeline API",
+            "pages": [
+              "api/pipeline/fetch-lastfm",
+              "api/pipeline/build-graph",
+              "api/pipeline/run-pipeline",
+              "api/pipeline/get-job-status"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Import-only music library with automatic persistence",
+    "Hand-curated rotation system for daily listening",
+    "Automatic offline mode with download-on-stream",
+    "Multi-rotation support for different listening contexts",
+    "Interactive listening graph visualization",
+    "Multi-source music import (Bandcamp, Spotify, YouTube, Last.fm)",
+    "PageRank-based song discovery and recommendations",
+    "Directed weighted graph of listening patterns",
+    "Real-time graph analysis and clustering"
+  ],
+  "publicApiSurface": [
+    "GET /graph - Retrieve user's listening graph",
+    "GET /graph/node/:id - Get single node details",
+    "GET /graph/neighbors/:id - Get node neighbors",
+    "GET /graph/stats - Get graph statistics",
+    "GET /graph/analysis - Get enriched analysis data",
+    "GET /graph/path - Find paths between songs",
+    "POST /pipeline/fetch/lastfm - Fetch Last.fm scrobbles",
+    "POST /pipeline/build - Build graph from data",
+    "POST /pipeline/run - Queue full pipeline job",
+    "GET /pipeline/run/:jobId - Check job status",
+    "PlayerView component - Main music player UI",
+    "GraphView component - Listening graph visualization",
+    "SongKey type - Canonical song identity format",
+    "GraphNode interface - Graph node structure",
+    "ListeningGraph interface - Complete graph structure"
+  ]
+}
