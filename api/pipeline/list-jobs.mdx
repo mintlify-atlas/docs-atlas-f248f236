@@ -1,0 +1,189 @@
+---
+title: "GET /pipeline/run"
+description: "List pipeline jobs for a user"
+---
+
+## Endpoint
+
+```
+GET /pipeline/run
+```
+
+Retrieve all pipeline job statuses for a specific Last.fm username, ordered by creation time (most recent first).
+
+## Query Parameters
+
+<ParamField query="username" type="string" required>
+  The Last.fm username whose pipeline jobs to list
+</ParamField>
+
+## Response
+
+<ResponseField name="jobs" type="array">
+  Array of pipeline job objects
+  
+  <Expandable title="properties">
+    <ResponseField name="id" type="string">
+      Unique job identifier (UUID)
+    </ResponseField>
+    
+    <ResponseField name="username" type="string">
+      Last.fm username associated with this job
+    </ResponseField>
+    
+    <ResponseField name="status" type="string">
+      Current job status. One of:
+      - `queued` - Job is waiting to be processed
+      - `running` - Job is currently executing
+      - `succeeded` - Job completed successfully
+      - `failed` - Job failed with an error
+      - `cancelled` - Job was cancelled
+    </ResponseField>
+    
+    <ResponseField name="created_at" type="string">
+      ISO 8601 timestamp when the job was created
+    </ResponseField>
+    
+    <ResponseField name="started_at" type="string | null">
+      ISO 8601 timestamp when the job started executing (null if not yet started)
+    </ResponseField>
+    
+    <ResponseField name="completed_at" type="string | null">
+      ISO 8601 timestamp when the job finished (null if not yet completed)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Example Request
+
+<CodeGroup>
+```bash cURL
+curl "http://localhost:3001/pipeline/run?username=lastfm_user"
+```
+
+```javascript JavaScript
+const response = await fetch(
+  'http://localhost:3001/pipeline/run?username=lastfm_user'
+);
+const data = await response.json();
+console.log(data.jobs);
+```
+
+```python Python
+import requests
+
+response = requests.get(
+    'http://localhost:3001/pipeline/run',
+    params={'username': 'lastfm_user'}
+)
+jobs = response.json()['jobs']
+```
+</CodeGroup>
+
+## Example Response
+
+```json
+{
+  "jobs": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "username": "lastfm_user",
+      "status": "succeeded",
+      "created_at": "2024-03-16T10:30:00.000Z",
+      "started_at": "2024-03-16T10:30:05.000Z",
+      "completed_at": "2024-03-16T10:45:23.000Z"
+    },
+    {
+      "id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "username": "lastfm_user",
+      "status": "running",
+      "created_at": "2024-03-16T14:20:00.000Z",
+      "started_at": "2024-03-16T14:20:03.000Z",
+      "completed_at": null
+    },
+    {
+      "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "username": "lastfm_user",
+      "status": "failed",
+      "created_at": "2024-03-15T08:15:00.000Z",
+      "started_at": "2024-03-15T08:15:02.000Z",
+      "completed_at": "2024-03-15T08:16:45.000Z"
+    }
+  ]
+}
+```
+
+## Error Responses
+
+<ResponseField name="400 Bad Request" type="object">
+  Returned when the username parameter is missing
+  
+  ```json
+  {
+    "error": "Missing required query parameter: username"
+  }
+  ```
+</ResponseField>
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Job History" icon="clock-rotate-left">
+    View all past pipeline runs for a user
+  </Card>
+  <Card title="Status Dashboard" icon="dashboard">
+    Monitor active and completed jobs
+  </Card>
+  <Card title="Error Investigation" icon="bug">
+    Find failed jobs to investigate issues
+  </Card>
+  <Card title="Job Management" icon="list-check">
+    Track job completion and success rates
+  </Card>
+</CardGroup>
+
+## Workflow Example
+
+<Steps>
+  <Step title="Queue a pipeline job">
+    ```bash
+    curl -X POST http://localhost:3001/pipeline/run \
+      -H "Content-Type: application/json" \
+      -d '{"username":"lastfm_user"}'
+    ```
+    
+    Returns: `{"jobId": "550e8400-e29b-41d4-a716-446655440000"}`
+  </Step>
+  
+  <Step title="List all jobs for the user">
+    ```bash
+    curl "http://localhost:3001/pipeline/run?username=lastfm_user"
+    ```
+    
+    See all jobs including the newly queued one
+  </Step>
+  
+  <Step title="Check specific job status">
+    ```bash
+    curl "http://localhost:3001/pipeline/run/550e8400-e29b-41d4-a716-446655440000"
+    ```
+    
+    Get detailed status of the specific job
+  </Step>
+</Steps>
+
+## Notes
+
+<Note>
+  Jobs are returned in reverse chronological order (most recent first). Use this endpoint to build a job history UI or monitor pipeline health.
+</Note>
+
+<Info>
+  An empty jobs array is returned if the user has never run the pipeline. This is not an error condition.
+</Info>
+
+## Related Endpoints
+
+- [POST /pipeline/run](/api/pipeline/run-pipeline) - Queue a new pipeline job
+- [GET /pipeline/run/:jobId](/api/pipeline/get-job-status) - Get status of a specific job
+- [POST /pipeline/fetch/lastfm](/api/pipeline/fetch-lastfm) - Fetch scrobbles without building graph

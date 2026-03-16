@@ -102,6 +102,7 @@
             "group": "Graph API",
             "pages": [
               "api/graph/get-graph",
+              "api/graph/get-metrics",
               "api/graph/get-node",
               "api/graph/get-neighbors",
               "api/graph/get-stats",
@@ -115,7 +116,8 @@
               "api/pipeline/fetch-lastfm",
               "api/pipeline/build-graph",
               "api/pipeline/run-pipeline",
-              "api/pipeline/get-job-status"
+              "api/pipeline/get-job-status",
+              "api/pipeline/list-jobs"
             ]
           }
         ]

@@ -1,0 +1,158 @@
+---
+title: "GET /graph/metrics"
+description: "Retrieve per-node metrics for a specific layout mode"
+---
+
+## Endpoint
+
+```
+GET /graph/metrics
+```
+
+Returns metrics (PageRank, MDS scores, or weighted MDS scores) for all nodes in a user's graph, depending on the requested layout mode.
+
+## Query Parameters
+
+<ParamField query="user" type="string" required>
+  The Last.fm username whose graph to query
+</ParamField>
+
+<ParamField query="layout" type="string" required>
+  The layout mode for which to retrieve metrics. Must be one of:
+  - `pagerank` - PageRank scores
+  - `mds` - Multidimensional scaling scores
+  - `weighted-mds` - Weighted MDS scores
+</ParamField>
+
+## Response
+
+<ResponseField name="metrics" type="object">
+  A mapping of node IDs (UUIDs) to their metric scores
+  
+  <Expandable title="properties">
+    <ResponseField name="[nodeId]" type="object">
+      Metrics for a specific node
+      
+      <Expandable title="properties">
+        <ResponseField name="pageRank" type="number">
+          PageRank score (only present when `layout=pagerank`)
+        </ResponseField>
+        
+        <ResponseField name="mdsScore" type="number">
+          MDS score (only present when `layout=mds`)
+        </ResponseField>
+        
+        <ResponseField name="weightedMdsScore" type="number">
+          Weighted MDS score (only present when `layout=weighted-mds`)
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Example Request
+
+<CodeGroup>
+```bash cURL
+curl "http://localhost:3001/graph/metrics?user=lastfm_user&layout=pagerank"
+```
+
+```javascript JavaScript
+const response = await fetch(
+  'http://localhost:3001/graph/metrics?user=lastfm_user&layout=pagerank'
+);
+const data = await response.json();
+console.log(data.metrics);
+```
+
+```python Python
+import requests
+
+response = requests.get(
+    'http://localhost:3001/graph/metrics',
+    params={'user': 'lastfm_user', 'layout': 'pagerank'}
+)
+metrics = response.json()['metrics']
+```
+</CodeGroup>
+
+## Example Response
+
+```json
+{
+  "metrics": {
+    "550e8400-e29b-41d4-a716-446655440000": {
+      "pageRank": 0.0234
+    },
+    "6ba7b810-9dad-11d1-80b4-00c04fd430c8": {
+      "pageRank": 0.0189
+    },
+    "7c9e6679-7425-40de-944b-e07fc1f90ae7": {
+      "pageRank": 0.0156
+    }
+  }
+}
+```
+
+## Error Responses
+
+<ResponseField name="400 Bad Request" type="object">
+  Returned when required parameters are missing or invalid
+  
+  ```json
+  {
+    "error": "Missing required query parameter: user"
+  }
+  ```
+  
+  or
+  
+  ```json
+  {
+    "error": "Missing or invalid query parameter: layout (pagerank|mds|weighted-mds)"
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="404 Not Found" type="object">
+  Returned when the specified user does not exist
+  
+  ```json
+  {
+    "error": "User not found"
+  }
+  ```
+</ResponseField>
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Visualization Coloring" icon="palette">
+    Use PageRank scores to color nodes by importance in your graph visualization
+  </Card>
+  <Card title="Node Sizing" icon="chart-scatter">
+    Size nodes based on their metric scores to highlight influential songs
+  </Card>
+  <Card title="Ranking Lists" icon="list-ol">
+    Create sorted lists of top songs by metric score
+  </Card>
+  <Card title="Layout Optimization" icon="sitemap">
+    Use MDS scores to optimize custom graph layouts
+  </Card>
+</CardGroup>
+
+## Notes
+
+<Note>
+  Metrics are pre-computed when the graph is built and stored in the database. This endpoint returns cached values for fast access.
+</Note>
+
+<Info>
+  Only the metric field corresponding to the requested layout will be populated in each node object. For example, when `layout=pagerank`, only the `pageRank` field will be present.
+</Info>
+
+## Related Endpoints
+
+- [GET /graph](/api/graph/get-graph) - Retrieve the full graph with positions
+- [GET /graph/analysis](/api/graph/get-analysis) - Get comprehensive analysis including metrics
+- [GET /graph/node/:id](/api/graph/get-node) - Get a single node with its metrics
