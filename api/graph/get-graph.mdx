@@ -1,0 +1,260 @@
+---
+title: Get Graph
+description: Retrieve the full listening graph for a user
+---
+
+## Endpoint
+
+```
+GET /graph
+```
+
+Returns the complete listening graph for a user, including all nodes with their relationships, metadata, and analysis results. Supports optional pagination for large graphs.
+
+## Query Parameters
+
+<ParamField query="user" type="string" required>
+  The Last.fm username whose graph to retrieve
+</ParamField>
+
+<ParamField query="limit" type="integer" default="0">
+  Maximum number of nodes to return. When set to 0 or omitted, returns all nodes.
+</ParamField>
+
+<ParamField query="offset" type="integer" default="0">
+  Number of nodes to skip (for pagination). Only used when `limit` is set.
+</ParamField>
+
+## Response
+
+<ResponseField name="nodes" type="object">
+  Dictionary of nodes keyed by UUID
+  
+  <Expandable title="CompactGraphNode properties">
+    <ResponseField name="songKey" type="string">
+      Canonical song identifier in format `artist::track` (both lowercase)
+    </ResponseField>
+    
+    <ResponseField name="mbid" type="string">
+      MusicBrainz ID from Last.fm (if available)
+    </ResponseField>
+    
+    <ResponseField name="name" type="string">
+      Track name
+    </ResponseField>
+    
+    <ResponseField name="artists" type="string[]">
+      List of artist names
+    </ResponseField>
+    
+    <ResponseField name="albumName" type="string">
+      Album name (if available)
+    </ResponseField>
+    
+    <ResponseField name="lastfmUrl" type="string">
+      Last.fm URL for the track
+    </ResponseField>
+    
+    <ResponseField name="imageUrl" type="string">
+      Album artwork URL
+    </ResponseField>
+    
+    <ResponseField name="next" type="object">
+      Outgoing edges: UUID → edge weight (number of times this song was followed by that song)
+    </ResponseField>
+    
+    <ResponseField name="previous" type="object">
+      Incoming edges: UUID → edge weight (number of times this song followed that song)
+    </ResponseField>
+    
+    <ResponseField name="totalPlays" type="integer">
+      Total number of times this song was played
+    </ResponseField>
+    
+    <ResponseField name="sources" type="string[]">
+      Data sources (currently only `["lastfm"]`)
+    </ResponseField>
+    
+    <ResponseField name="sourcePlays" type="object">
+      Breakdown of plays per source: `{ "lastfm": number }`
+    </ResponseField>
+    
+    <ResponseField name="pageRank" type="number">
+      PageRank score (centrality measure)
+    </ResponseField>
+    
+    <ResponseField name="clusterId" type="integer">
+      Community cluster ID assigned by Louvain algorithm
+    </ResponseField>
+    
+    <ResponseField name="playDates" type="string[]">
+      ISO 8601 timestamps of all plays, chronologically sorted
+    </ResponseField>
+    
+    <ResponseField name="positions" type="object">
+      Pre-computed layout positions for visualization
+      
+      <Expandable title="Layout positions">
+        <ResponseField name="pagerank" type="object">
+          Position in PageRank-based layout: `{ x: number, y: number }`
+        </ResponseField>
+        <ResponseField name="mds" type="object">
+          Position in MDS layout: `{ x: number, y: number }`
+        </ResponseField>
+        <ResponseField name="weighted-mds" type="object">
+          Position in weighted MDS layout: `{ x: number, y: number }`
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="metadata" type="object">
+  Graph metadata
+  
+  <Expandable title="GraphMetadata properties">
+    <ResponseField name="totalScrobbles" type="integer">
+      Total number of scrobbles used to build this graph
+    </ResponseField>
+    
+    <ResponseField name="dateRange" type="object">
+      Time range of scrobble data
+      <Expandable>
+        <ResponseField name="from" type="string">
+          ISO 8601 timestamp of earliest scrobble
+        </ResponseField>
+        <ResponseField name="to" type="string">
+          ISO 8601 timestamp of latest scrobble
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="exportTimestamp" type="string">
+      ISO 8601 timestamp when this graph was built
+    </ResponseField>
+    
+    <ResponseField name="lastfmUsername" type="string">
+      Last.fm username
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="pagination" type="object">
+  Pagination information (only present when `limit` is set)
+  
+  <Expandable title="Pagination properties">
+    <ResponseField name="total" type="integer">
+      Total number of nodes in the graph
+    </ResponseField>
+    
+    <ResponseField name="offset" type="integer">
+      Current offset
+    </ResponseField>
+    
+    <ResponseField name="limit" type="integer">
+      Current limit
+    </ResponseField>
+    
+    <ResponseField name="hasMore" type="boolean">
+      Whether more nodes are available
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+```bash Full Graph
+curl "http://localhost:3000/graph?user=johndoe"
+```
+
+```bash Paginated
+curl "http://localhost:3000/graph?user=johndoe&limit=100&offset=0"
+```
+</CodeGroup>
+
+<CodeGroup>
+```json 200 Success (Full)
+{
+  "nodes": {
+    "a1b2c3d4-e5f6-7890-abcd-ef1234567890": {
+      "songKey": "radiohead::karma police",
+      "mbid": "12345678-1234-1234-1234-123456789abc",
+      "name": "Karma Police",
+      "artists": ["Radiohead"],
+      "albumName": "OK Computer",
+      "lastfmUrl": "https://www.last.fm/music/Radiohead/_/Karma+Police",
+      "imageUrl": "https://lastfm.freetls.fastly.net/i/u/300x300/abc123.jpg",
+      "next": {
+        "b2c3d4e5-f6a7-8901-bcde-f12345678901": 5,
+        "c3d4e5f6-a7b8-9012-cdef-123456789012": 3
+      },
+      "previous": {
+        "d4e5f6a7-b8c9-0123-def1-234567890123": 4
+      },
+      "totalPlays": 42,
+      "sources": ["lastfm"],
+      "sourcePlays": {
+        "lastfm": 42
+      },
+      "pageRank": 0.0023456,
+      "clusterId": 3,
+      "playDates": [
+        "2024-01-15T14:23:00Z",
+        "2024-01-20T09:45:00Z"
+      ],
+      "positions": {
+        "pagerank": { "x": 0.234, "y": 0.567 },
+        "mds": { "x": -0.123, "y": 0.456 },
+        "weighted-mds": { "x": 0.345, "y": -0.234 }
+      }
+    }
+  },
+  "metadata": {
+    "totalScrobbles": 15234,
+    "dateRange": {
+      "from": "2020-01-01T00:00:00Z",
+      "to": "2024-03-15T23:59:59Z"
+    },
+    "exportTimestamp": "2024-03-16T10:30:00Z",
+    "lastfmUsername": "johndoe"
+  }
+}
+```
+
+```json 200 Success (Paginated)
+{
+  "nodes": {
+    "a1b2c3d4-e5f6-7890-abcd-ef1234567890": { /* ... */ }
+  },
+  "metadata": { /* ... */ },
+  "pagination": {
+    "total": 1523,
+    "offset": 0,
+    "limit": 100,
+    "hasMore": true
+  }
+}
+```
+
+```json 400 Bad Request
+{
+  "error": "Missing required query parameter: user"
+}
+```
+
+```json 404 Not Found
+{
+  "error": "User not found"
+}
+```
+</CodeGroup>
+
+## Notes
+
+<Note>
+- Node UUIDs are stable for a given user's graph
+- The `next` and `previous` fields use UUIDs for neighbor references (not SongKeys)
+- Pagination preserves the full `metadata` object in each response
+- Large graphs (>1000 nodes) should use pagination for better performance
+</Note>

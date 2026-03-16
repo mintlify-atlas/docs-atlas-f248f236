@@ -1,0 +1,316 @@
+---
+title: "Project Structure"
+description: "Navigate the Rotations codebase and understand its organization"
+---
+
+## Monorepo Layout
+
+Rotations is organized as a **pnpm workspace** monorepo with three main packages:
+
+```
+rotations/
+├── site/                    # Music player (Astro + React)
+├── graph-server/            # Graph API server (Hono)
+├── graph-frontend/          # Graph visualization (React)
+├── docker-compose.yaml      # Postgres database
+├── package.json             # Root workspace config
+├── pnpm-workspace.yaml      # Workspace definition
+└── pnpm-lock.yaml          # Lockfile
+```
+
+## Music Player (site/)
+
+The main music player application built with Astro and React.
+
+```
+site/
+├── src/
+│   ├── components/         # React components
+│   │   ├── PlayerView.tsx        # Main player container
+│   │   ├── PlayerLayout.tsx      # Player UI layout
+│   │   ├── AddMusicButton.tsx    # Import music modal
+│   │   ├── SpotifyView.tsx       # Spotify integration
+│   │   ├── GraphView.tsx         # Embedded graph viz
+│   │   └── PlaylistGridCard.tsx  # Playlist UI
+│   ├── pages/              # Astro pages & API routes
+│   │   ├── index.astro           # Main app entry
+│   │   ├── Layout.astro          # Base HTML layout
+│   │   └── api/                  # API endpoints
+│   │       ├── audio/proxy.ts    # Audio streaming proxy
+│   │       ├── bandcamp/scrape.ts
+│   │       ├── spotify/          # Spotify OAuth & API
+│   │       └── youtube/          # YouTube integration
+│   ├── lib/                # Core logic
+│   │   ├── tinybase-store.ts     # TinyBase state setup
+│   │   ├── audio-cache.ts        # IndexedDB cache
+│   │   └── spotify-client.ts     # Spotify SDK client
+│   ├── shared/             # Shared types
+│   │   └── types.ts              # TypeScript interfaces
+│   ├── hooks/              # React hooks
+│   │   ├── usePlayer.ts          # Playback hook
+│   │   └── useRotation.ts        # Rotation logic
+│   └── styles/
+│       └── global.css            # Tailwind imports
+├── public/                 # Static assets
+├── astro.config.mjs        # Astro configuration
+├── package.json
+└── tsconfig.json
+```
+
+### Key Files
+
+<Accordion title="src/components/PlayerView.tsx">
+  Main player component that orchestrates:
+  - Playback state management
+  - Rotation system
+  - Playlist navigation
+  - Offline mode
+</Accordion>
+
+<Accordion title="src/lib/tinybase-store.ts">
+  TinyBase store configuration:
+  - Tables: `tracks`, `playlists`, `playlistTracks`
+  - Indexes for fast lookup
+  - Relationships between entities
+</Accordion>
+
+<Accordion title="src/pages/api/">
+  Server-side API routes for:
+  - Audio proxying (CORS bypass)
+  - Music source scraping
+  - OAuth flows
+</Accordion>
+
+## Graph Server (graph-server/)
+
+REST API server for listening graph data and pipeline management.
+
+```
+graph-server/
+├── src/
+│   ├── server/             # HTTP server
+│   │   ├── app.ts               # Hono app with all routes
+│   │   └── index.ts             # Server entry point
+│   ├── graph/              # Graph construction
+│   │   ├── types.ts             # Core type definitions
+│   │   ├── build-graph.ts       # Graph builder
+│   │   └── database.ts          # Postgres client
+│   ├── ingestion/          # Data fetching
+│   │   ├── lastfm-client.ts     # Last.fm API wrapper
+│   │   └── lastfm-fetcher.ts    # Scrobble pagination
+│   ├── analysis/           # Graph algorithms
+│   │   ├── pagerank.ts          # PageRank algorithm
+│   │   ├── clusters.ts          # Cluster detection
+│   │   ├── layout.ts            # Layout computation
+│   │   ├── paths.ts             # Path finding
+│   │   ├── stats.ts             # Statistics
+│   │   └── enrich.ts            # Orchestrator
+│   └── config.ts           # Environment config
+├── data/                   # Runtime data (gitignored)
+├── package.json
+└── tsconfig.json
+```
+
+### Key Files
+
+<Accordion title="src/server/app.ts">
+  Main Hono application defining all API endpoints:
+  - Graph retrieval (`GET /graph`, `/graph/node/:id`, etc.)
+  - Pipeline management (`POST /pipeline/run`, etc.)
+  - Path finding (`GET /graph/path`)
+</Accordion>
+
+<Accordion title="src/graph/types.ts">
+  Core type definitions:
+  - `SongKey` - Canonical song identity
+  - `GraphNode` - Node with edges and metadata
+  - `ListeningGraph` - Complete graph structure
+  - `CompactGraph` - API response format
+</Accordion>
+
+<Accordion title="src/analysis/pagerank.ts">
+  PageRank implementation:
+  - Power iteration method
+  - Convergence detection
+  - Damping factor: 0.85
+</Accordion>
+
+## Graph Frontend (graph-frontend/)
+
+Interactive graph visualization built with React and Sigma.js.
+
+```
+graph-frontend/
+├── src/
+│   ├── components/         # UI components
+│   │   ├── Graph.tsx            # Sigma.js wrapper
+│   │   ├── SearchBar.tsx        # Node search
+│   │   ├── SelectionPanel.tsx   # Node details
+│   │   ├── DepthSliders.tsx     # Neighbor depth control
+│   │   └── ArtistFilter.tsx     # Artist filtering
+│   ├── routes/             # TanStack Router routes
+│   │   └── index.tsx            # Main graph page
+│   ├── pages/              # Page components
+│   │   └── MusicGraph.tsx       # Graph page layout
+│   ├── contexts/
+│   │   └── graphContext.tsx     # Graph state
+│   ├── lib/
+│   │   ├── types.ts             # TypeScript types
+│   │   └── utils.ts             # Utilities
+│   └── styles.css          # Tailwind styles
+├── package.json
+└── tsconfig.json
+```
+
+### Key Files
+
+<Accordion title="src/components/Graph.tsx">
+  Sigma.js integration:
+  - Graph rendering with WebGL
+  - Node/edge styling
+  - Interaction handlers (click, hover)
+  - Force-directed layout
+</Accordion>
+
+<Accordion title="src/contexts/graphContext.tsx">
+  React Context providing:
+  - Graph data from API
+  - Selected node state
+  - Neighbor depth state
+  - Search/filter state
+</Accordion>
+
+## Configuration Files
+
+### Root Level
+
+<CodeGroup>
+```yaml pnpm-workspace.yaml
+packages:
+  - 'site'
+  - 'graph-server'
+  - 'graph-frontend'
+```
+
+```json package.json
+{
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --parallel --filter graph-pipeline --filter graph-frontend",
+    "dev:all": "pnpm --parallel -r dev",
+    "format": "pnpm -r format",
+    "tunnel": "./tunnel.sh"
+  },
+  "packageManager": "pnpm@10.28.0"
+}
+```
+
+```yaml docker-compose.yaml
+services:
+  postgres:
+    image: postgres:16
+    container_name: graph-postgres
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: graph
+```
+</CodeGroup>
+
+## TypeScript Configuration
+
+Each package has its own `tsconfig.json` with strict type checking:
+
+```json tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true
+  }
+}
+```
+
+## Development Tools
+
+### Linting & Formatting
+
+<CardGroup cols={2}>
+  <Card title="ESLint" icon="shield-check">
+    Code quality checks with TypeScript support
+  </Card>
+  <Card title="Prettier" icon="code">
+    Consistent code formatting across all packages
+  </Card>
+</CardGroup>
+
+### Testing
+
+<CardGroup cols={2}>
+  <Card title="Vitest" icon="vial">
+    Unit testing framework (compatible with Jest API)
+  </Card>
+  <Card title="Testing Library" icon="flask">
+    React component testing utilities
+  </Card>
+</CardGroup>
+
+## Build Outputs
+
+### Production Builds
+
+```bash
+# Music player
+site/dist/                  # Static Astro output
+
+# Graph server
+graph-server/dist/          # Compiled TypeScript
+
+# Graph frontend
+graph-frontend/dist/        # Vite production build
+```
+
+## Environment Variables
+
+<Tabs>
+  <Tab title="site/.env">
+    ```env
+    # Spotify OAuth (optional)
+    SPOTIFY_CLIENT_ID=your_client_id
+    SPOTIFY_CLIENT_SECRET=your_client_secret
+    SPOTIFY_REDIRECT_URI=http://localhost:4321/api/spotify/callback
+    ```
+  </Tab>
+  
+  <Tab title="graph-server/.env">
+    ```env
+    # Required
+    LASTFM_API_KEY=your_lastfm_api_key
+    DATABASE_URL=postgresql://postgres:postgres@localhost:5432/graph
+    
+    # Optional
+    GRAPH_SERVER_PORT=3001
+    ```
+  </Tab>
+</Tabs>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Music Player Deep Dive" icon="music" href="/developers/music-player">
+    Learn about the player implementation
+  </Card>
+  <Card title="Graph Server Deep Dive" icon="server" href="/developers/graph-server">
+    Understand the API and pipeline
+  </Card>
+  <Card title="Local Development" icon="code" href="/developers/local-development">
+    Start developing features
+  </Card>
+  <Card title="Testing Guide" icon="vial" href="/developers/testing">
+    Run and write tests
+  </Card>
+</CardGroup>

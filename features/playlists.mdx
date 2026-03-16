@@ -1,0 +1,430 @@
+---
+title: Playlists
+description: Managing playlists and building your music rotation
+---
+
+## Overview
+
+In Rotations, playlists are collections of tracks from a single source (Bandcamp album, Spotify playlist, etc.) that serve as building blocks for your rotation.
+
+<Info>
+  Every playlist you add becomes part of your rotation, contributing to your listening graph and recommendations.
+</Info>
+
+## Playlist Structure
+
+```typescript
+// From site/src/shared/types.ts
+export interface FuckingPlaylist {
+  id: PlaylistId                    // "play-{source}-{id}"
+  track_cover_uri: string           // Album artwork URL
+  name: string                      // Album/playlist name
+  artists: string[]                 // Artist names
+  first_track: FuckingTrack        // First track (for preview)
+  totalDurationMs: number           // Total length
+  source: PlaylistSource | null     // "spotify" | "youtube" | "bandcamp"
+}
+
+export interface FuckingTrack {
+  id: TrackId                       // "track-{source}-{id}"
+  time_ms: number                   // Track duration
+  name: string                      // Track title
+  artists: string[]                 // Artist names
+  tags?: string[]                   // Genre/mood tags
+  audio: AudioSource                // Playback source
+  next_tracks?: Record<PlaylistId, TrackId>  // Cross-playlist links
+}
+```
+
+## Creating Playlists
+
+### From Bandcamp
+
+<Steps>
+  <Step title="Find Album">
+    Browse Bandcamp and copy an album URL:
+    ```
+    https://artistname.bandcamp.com/album/album-name
+    ```
+  </Step>
+  
+  <Step title="Import">
+    Click **Add Album** in the player and paste the URL
+  </Step>
+  
+  <Step title="Automatic Processing">
+    The scraper extracts:
+    - Album metadata (artist, title, artwork)
+    - Track listing with durations
+    - Direct MP3 stream URLs
+    - Genre tags (if available)
+  </Step>
+  
+  <Step title="Play">
+    Playlist immediately available for playback
+  </Step>
+</Steps>
+
+```typescript
+// From site/src/components/AddMusicButton.tsx
+const handleSubmit = async () => {
+  const endpoint = getApiEndpoint(inputValue)  // Detects source
+  const res = await fetch(`${endpoint}?url=${encodeURIComponent(inputValue)}`)
+  const data = await res.json()
+
+  // Insert into local database
+  db.insertPlaylist(data.playlist)
+  db.insertTracks(data.tracks, data.playlist.id)
+
+  // Start playing
+  setPlaylistAndTracks({ playlistId: data.playlist.id })
+}
+```
+
+### From Spotify
+
+<Note>Spotify integration is in progress. Current functionality includes basic playlist sync.</Note>
+
+<Steps>
+  <Step title="Authenticate">
+    Connect your Spotify account via OAuth
+  </Step>
+  
+  <Step title="Select Playlists">
+    Choose which playlists to sync
+  </Step>
+  
+  <Step title="Import">
+    Tracks are imported with Spotify IDs for native playback
+  </Step>
+</Steps>
+
+### From YouTube
+
+<Note>YouTube integration is in progress. Basic video streaming works.</Note>
+
+Paste a YouTube video URL to add it as a single-track playlist.
+
+## Playlist Storage
+
+Playlists are stored locally using TinyBase:
+
+```typescript
+// From site/src/lib/store.ts
+export class Database {
+  getPlaylist(playlistId: PlaylistId): FuckingPlaylist | null {
+    const row = store.getRow("playlists", playlistId)
+    if (!row || !row.id) return null
+
+    const firstTrack = this.getTrack(row.first_track_id as TrackId)
+    if (!firstTrack) return null
+
+    const tracks = this.getTracks(playlistId)
+    const totalDurationMs = tracks.reduce((acc, track) => acc + track.time_ms, 0)
+
+    return {
+      id: row.id as PlaylistId,
+      track_cover_uri: row.track_cover_uri as string,
+      name: row.name as string,
+      artists: JSON.parse(row.artists as string),
+      first_track: firstTrack,
+      totalDurationMs,
+      source: row.source as PlaylistSource,
+    }
+  }
+
+  getPlaylists(): FuckingPlaylist[] {
+    const playlists: FuckingPlaylist[] = []
+    const rowIds = store.getRowIds("playlists")
+
+    for (const rowId of rowIds) {
+      const playlist = this.getPlaylist(rowId as PlaylistId)
+      if (playlist) playlists.push(playlist)
+    }
+
+    return playlists
+  }
+}
+```
+
+**Storage location:** Browser IndexedDB via TinyBase's localStorage persister
+
+**Schema:**
+- `playlists` table - Playlist metadata
+- `tracks` table - All tracks with `playlist_id` foreign key
+- Automatic JSON serialization for arrays and objects
+
+## Viewing Playlists
+
+### Rotation View
+
+Click **"View full rotation"** to see all playlists:
+
+```typescript
+// From site/src/components/PlayerView.tsx
+function PlaylistsContent({ onPlaylistClick }) {
+  const [playlists, setPlaylists] = useState(() => db.getPlaylists())
+
+  return (
+    <div className="max-w-2xl mx-auto">
+      {playlists.map((playlist) => (
+        <div
+          key={playlist.id}
+          onClick={() => onPlaylistClick(playlist.id)}
+          className="flex gap-4 cursor-pointer hover:bg-white/5"
+        >
+          {/* Album artwork */}
+          <img
+            src={playlist.track_cover_uri}
+            className="w-16 h-16 object-cover rounded"
+          />
+          
+          {/* Metadata */}
+          <div>
+            <span className="font-medium">{playlist.name}</span>
+            <span className="text-sm">
+              {playlist.artists[0]} · {formatDuration(playlist.totalDurationMs)}
+            </span>
+            
+            {/* Genre tags */}
+            {playlist.first_track.tags?.slice(0, 5).map((tag) => (
+              <span key={tag} className="text-xs border rounded-full">
+                {tag}
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+```
+
+**Display includes:**
+- Album artwork thumbnail
+- Playlist name and artist
+- Total duration
+- Genre tags (first 5)
+- Click to switch playlists
+
+## Switching Playlists
+
+```typescript
+const handlePlaylistClick = (playlistId: PlaylistId) => {
+  // Save current state
+  db.setPlayerState({ lastPlaylistId: playlistId })
+  
+  // Load new playlist
+  setPlaylistAndTracks({ playlistId })
+  
+  // Return to player view
+  setView("player")
+}
+```
+
+Switching:
+1. Saves current position
+2. Loads new playlist tracks
+3. Resets playback to track 1
+4. Returns to player view
+5. Starts playing automatically
+
+## Track Metadata
+
+### Tags
+
+Tracks can have genre/mood tags for discovery:
+
+```typescript
+const track: FuckingTrack = {
+  id: "track-123",
+  name: "Midnight City",
+  artists: ["M83"],
+  tags: ["electronic", "synthwave", "upbeat", "80s"],
+  // ...
+}
+```
+
+Tags are:
+- Extracted from Bandcamp keywords
+- Fetched from Spotify track data
+- Displayed in playlist view
+- Used for recommendations
+
+### Next Tracks
+
+Tracks can link to tracks in other playlists:
+
+```typescript
+const track: FuckingTrack = {
+  id: "track-123",
+  name: "Song A",
+  next_tracks: {
+    "play-abc": "track-456",  // Next track in playlist ABC
+    "play-xyz": "track-789",  // Alternative in playlist XYZ
+  },
+  // ...
+}
+```
+
+This powers:
+- **Cross-playlist navigation** - Seamless transitions
+- **Listening graph edges** - Visual connections
+- **Smart recommendations** - Based on actual paths
+
+## Playlist Operations
+
+<Accordion title="Adding Tracks to Playlist">
+  Currently, playlists are immutable after import. Future enhancement: manual track addition.
+</Accordion>
+
+<Accordion title="Reordering Tracks">
+  Track order is fixed based on source order. Future enhancement: custom reordering.
+</Accordion>
+
+<Accordion title="Deleting Playlists">
+  Not yet implemented. Workaround: Clear browser storage to reset.
+</Accordion>
+
+<Accordion title="Editing Metadata">
+  Metadata is read-only from source. Future enhancement: custom titles/tags.
+</Accordion>
+
+## Playlist Analytics
+
+### Total Duration
+
+```typescript
+const totalDurationMs = tracks.reduce((acc, track) => acc + track.time_ms, 0)
+
+function formatDuration(ms: number): string {
+  const minutes = Math.floor(ms / 60000)
+  const hours = Math.floor(minutes / 60)
+  if (hours > 0) {
+    return `${hours}h ${minutes % 60}m`
+  }
+  return `${minutes}m`
+}
+```
+
+### Play Count
+
+Track play counts feed into the listening graph:
+
+```typescript
+// Graph node includes total plays
+interface GraphNode {
+  totalPlays: number
+  sourcePlays?: {
+    lastfm?: number
+    spotify?: number
+    // ...
+  }
+}
+```
+
+View in graph visualization to see most-played tracks.
+
+## Multi-Playlist Features
+
+### Rotation Time
+
+Player shows remaining time across all playlists:
+
+```typescript
+// From site/src/components/PlayerView.tsx
+const remainingMs = useMemo(() => {
+  if (!currentTrack) return 0
+  
+  // Remaining in current track
+  const remainingInCurrentTrack = currentTrack.time_ms - currentTimeMs
+  
+  // Remaining tracks in playlist
+  const remainingTracks = tracks.slice(currentTrackIndex + 1)
+  const remainingTracksTime = remainingTracks.reduce(
+    (acc, track) => acc + track.time_ms, 
+    0
+  )
+  
+  return remainingInCurrentTrack + remainingTracksTime
+}, [currentTrack, currentTrackIndex, currentTimeMs, tracks])
+
+const remainingMinutes = Math.floor(remainingMs / 60000)
+```
+
+Displays: **"42 minutes left"** in player UI
+
+### Cross-Playlist Transitions
+
+Side tracks show what's coming from other playlists:
+
+```typescript
+const nextTracks = useMemo(() => {
+  if (!currentTrack?.next_tracks) return []
+  
+  return Object.entries(currentTrack.next_tracks)
+    .filter(([playlistId]) => playlistId !== playlist.id)  // Exclude current
+    .map(([playlistId, trackId]) => ({
+      playlist: db.getPlaylist(playlistId as PlaylistId),
+      track: db.getTrack(trackId as TrackId),
+    }))
+}, [currentTrack, playlist])
+```
+
+Creates visual hints about rotation flow.
+
+## Best Practices
+
+<Tip>
+  **Import complete albums** rather than single tracks for richer listening graphs
+</Tip>
+
+<Tip>
+  **Add diverse genres** to discover interesting cross-genre transitions
+</Tip>
+
+<Tip>
+  **Review your rotation weekly** to see which playlists dominate your listening
+</Tip>
+
+<Warning>
+  Don't import too many playlists at once - start with 5-10 and grow organically
+</Warning>
+
+## Troubleshooting
+
+<Accordion title="Playlist Won't Import">
+  - Check URL format matches source pattern
+  - Some Bandcamp albums have CORS restrictions
+  - Spotify requires authentication first
+  - YouTube URLs must be direct video links
+</Accordion>
+
+<Accordion title="Missing Album Artwork">
+  - Source may not provide artwork
+  - Try refreshing the import
+  - Check browser console for CORS errors
+</Accordion>
+
+<Accordion title="Wrong Track Order">
+  - Order matches source playlist/album
+  - Cannot be manually reordered currently
+  - Re-import if source order changed
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Music Player" href="/features/music-player">
+    Learn about player controls and features
+  </Card>
+  <Card title="Offline Mode" href="/features/offline-mode">
+    Understand automatic track caching
+  </Card>
+  <Card title="Adding Music" href="/sources/bandcamp">
+    Import from Bandcamp, Spotify, YouTube
+  </Card>
+  <Card title="Rotations Concept" href="/concepts/rotations">
+    Understand how playlists become rotations
+  </Card>
+</CardGroup>

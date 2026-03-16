@@ -1,0 +1,546 @@
+---
+title: Last.fm Integration
+description: Import your complete listening history to build a listening graph
+---
+
+## Overview
+
+Last.fm integration is the foundation of Rotations' listening graph. It provides:
+
+- ✅ Complete scrobble history import
+- ✅ Graph construction from sequential plays
+- ✅ PageRank analysis
+- ✅ Cluster detection
+- ✅ Per-user data isolation
+- ✅ Checkpoint-based resume
+
+<Info>
+  Last.fm is the most powerful data source for graph analysis. A complete listening history reveals patterns invisible in playlists alone.
+</Info>
+
+## How It Works
+
+<Steps>
+  <Step title="User Provides Username">
+    Last.fm public username (no authentication needed)
+  </Step>
+  
+  <Step title="Fetch Scrobbles">
+    Graph server fetches complete history via `user.getRecentTracks` API:
+    - Paginated (200 scrobbles per page)
+    - Rate-limited (1 req/sec for safety)
+    - Checkpointed (resume after interruption)
+  </Step>
+  
+  <Step title="Build Graph">
+    Chronologically ordered scrobbles create edges:
+    - Song A → Song B (played in sequence)
+    - Edge weight = transition count
+    - Bidirectional (A.next[B] and B.previous[A])
+  </Step>
+  
+  <Step title="Analyze">
+    Compute PageRank, clusters, and statistics
+  </Step>
+  
+  <Step title="Store">
+    Save to PostgreSQL with per-user isolation
+  </Step>
+  
+  <Step title="Visualize">
+    Graph frontend renders interactive visualization
+  </Step>
+</Steps>
+
+## Setup
+
+<Steps>
+  <Step title="Get Last.fm API Key">
+    Visit [Last.fm API Account Creation](https://www.last.fm/api/account/create)
+    
+    - Create account if needed
+    - Fill out application form
+    - Copy API key (don't need shared secret)
+  </Step>
+  
+  <Step title="Configure Environment">
+    Create `graph-server/.env`:
+    
+    ```env
+    LASTFM_API_KEY=your_api_key_here
+    DATABASE_URL=postgresql://postgres:postgres@localhost:5432/graph
+    GRAPH_SERVER_PORT=3001
+    ```
+  </Step>
+  
+  <Step title="Start PostgreSQL">
+    ```bash
+    docker compose up -d
+    ```
+  </Step>
+  
+  <Step title="Start Graph Server">
+    ```bash
+    cd graph-server
+    pnpm dev
+    ```
+  </Step>
+</Steps>
+
+## Importing History
+
+### Using the Script
+
+The easiest way to import:
+
+```bash
+./reindex.sh your_lastfm_username
+```
+
+This script:
+1. Fetches all scrobbles
+2. Builds the graph
+3. Computes analysis
+4. Stores in database
+
+**Progress output:**
+```
+Found 45,723 scrobbles across 229 pages
+Page 1/229 — 198 tracks
+Page 2/229 — 396 tracks total
+...
+Page 229/229 — 45,723 tracks total
+Done! 45,723 scrobbles saved to lastfm-scrobbles-username.json
+
+Building graph...
+Found 12,453 unique songs
+Created 34,891 edges
+
+Computing PageRank...
+Converged in 23 iterations
+
+Detecting clusters...
+Found 47 clusters
+
+Storing in database...
+Done!
+```
+
+### Using the API
+
+Alternatively, queue via HTTP:
+
+```bash
+curl -X POST http://localhost:3001/pipeline/run \
+  -H "Content-Type: application/json" \
+  -d '{"username":"your_lastfm_username"}'
+```
+
+Response:
+```json
+{
+  "jobId": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "queued"
+}
+```
+
+Check status:
+```bash
+curl http://localhost:3001/pipeline/run/550e8400-e29b-41d4-a716-446655440000
+```
+
+Response:
+```json
+{
+  "jobId": "550e8400-e29b-41d4-a716-446655440000",
+  "username": "your_lastfm_username",
+  "status": "running",
+  "createdAt": "2026-03-16T10:30:00Z",
+  "startedAt": "2026-03-16T10:30:02Z"
+}
+```
+
+Statuses: `queued`, `running`, `succeeded`, `failed`, `cancelled`
+
+## Scrobble Fetching
+
+### Implementation
+
+```typescript
+// From graph-server/src/ingestion/lastfm-fetcher.ts
+
+const TRACKS_PER_PAGE = 200
+const RATE_LIMIT_MS = 1000  // 1 req/sec
+
+export async function fetchLastfmScrobbles(
+  client: LastfmClient,
+  options: FetchOptions,
+): Promise<RawScrobble[]> {
+  const log = options.onProgress ?? console.log
+  
+  // Check for existing checkpoint
+  let fromTimestamp = 0
+  let existingScrobbles: RawScrobble[] = []
+  
+  if (!options.fullRefresh && existsSync(checkpointPath)) {
+    const checkpoint = JSON.parse(await readFile(checkpointPath, "utf-8"))
+    fromTimestamp = checkpoint.lastTimestamp
+    existingScrobbles = JSON.parse(await readFile(outputPath, "utf-8"))
+    
+    log(`Resuming from checkpoint: ${checkpoint.scrobbleCount} scrobbles`)
+  }
+  
+  // First request to get total pages
+  const firstPage = await client.request<RecentTracksResponse>(
+    "user.getRecentTracks",
+    {
+      user: client.username,
+      limit: String(TRACKS_PER_PAGE),
+      page: "1",
+      ...(fromTimestamp > 0 ? { from: String(fromTimestamp) } : {}),
+    },
+  )
+  
+  const totalPages = parseInt(firstPage.recenttracks["@attr"].totalPages, 10)
+  log(`Found ${totalTracks} scrobbles across ${totalPages} pages`)
+  
+  // Parse first page
+  const newScrobbles: RawScrobble[] = []
+  for (const track of firstPage.recenttracks.track) {
+    const parsed = parseTrack(track)
+    if (parsed) newScrobbles.push(parsed)
+  }
+  
+  // Fetch remaining pages
+  for (let page = 2; page <= totalPages; page++) {
+    await sleep(RATE_LIMIT_MS)  // Rate limiting
+    
+    const response = await client.request<RecentTracksResponse>(
+      "user.getRecentTracks",
+      { user: client.username, limit: String(TRACKS_PER_PAGE), page: String(page) }
+    )
+    
+    for (const track of response.recenttracks.track) {
+      const parsed = parseTrack(track)
+      if (parsed) newScrobbles.push(parsed)
+    }
+    
+    log(`Page ${page}/${totalPages} — ${newScrobbles.length} tracks total`)
+    
+    // Save checkpoint every 10 pages
+    if (page % 10 === 0) {
+      await saveCheckpoint(newScrobbles)
+    }
+  }
+  
+  // Merge, deduplicate, sort
+  const allScrobbles = deduplicateScrobbles([
+    ...existingScrobbles,
+    ...newScrobbles,
+  ])
+  allScrobbles.sort((a, b) => a.timestamp - b.timestamp)
+  
+  await writeFile(outputPath, JSON.stringify(allScrobbles, null, 2))
+  log(`Done! ${allScrobbles.length} scrobbles saved`)
+  
+  return allScrobbles
+}
+```
+
+### Scrobble Format
+
+```typescript
+interface RawScrobble {
+  artist: string        // Artist name
+  track: string         // Track title
+  album: string         // Album name
+  timestamp: number     // Unix timestamp
+  imageUrl?: string     // Album artwork URL
+  mbid?: string         // MusicBrainz ID
+}
+```
+
+### Rate Limiting
+
+<Warning>
+  Last.fm API allows up to 5 requests/sec, but Rotations uses 1 req/sec to be conservative and avoid temporary bans.
+</Warning>
+
+**Why slow?**
+- Prevents rate limit errors
+- Avoids triggering anti-scraping measures
+- More reliable for large histories
+- Checkpoint saves allow resume if interrupted
+
+**Typical import times:**
+- 10k scrobbles: ~10 minutes
+- 50k scrobbles: ~45 minutes
+- 100k scrobbles: ~90 minutes
+- 200k scrobbles: ~180 minutes
+
+## Graph Construction
+
+Scrobbles are processed chronologically:
+
+```typescript
+// From graph-server/src/graph/build-graph.ts
+
+export function buildGraphFromScrobbles(
+  scrobbles: RawScrobble[]
+): ListeningGraph {
+  const nodes: Record<SongKey, GraphNode> = {}
+  
+  // Create nodes
+  for (const scrobble of scrobbles) {
+    const key = toSongKey(scrobble.artist, scrobble.track)
+    
+    if (!nodes[key]) {
+      nodes[key] = {
+        name: scrobble.track,
+        artists: [scrobble.artist],
+        albumName: scrobble.album,
+        imageUrl: scrobble.imageUrl,
+        mbid: scrobble.mbid,
+        next: {},
+        previous: {},
+        totalPlays: 0,
+        sources: ["lastfm"],
+        playDates: [],
+      }
+    }
+    
+    nodes[key].totalPlays++
+    nodes[key].playDates.push(new Date(scrobble.timestamp * 1000).toISOString())
+  }
+  
+  // Create edges from sequential plays
+  for (let i = 0; i < scrobbles.length - 1; i++) {
+    const current = toSongKey(scrobbles[i].artist, scrobbles[i].track)
+    const next = toSongKey(scrobbles[i + 1].artist, scrobbles[i + 1].track)
+    
+    // Skip self-loops (same song repeated)
+    if (current === next) continue
+    
+    // Increment edge weights
+    nodes[current].next[next] = (nodes[current].next[next] || 0) + 1
+    nodes[next].previous[current] = (nodes[next].previous[current] || 0) + 1
+  }
+  
+  return {
+    nodes,
+    metadata: {
+      totalScrobbles: scrobbles.length,
+      dateRange: {
+        from: new Date(scrobbles[0].timestamp * 1000).toISOString(),
+        to: new Date(scrobbles[scrobbles.length - 1].timestamp * 1000).toISOString(),
+      },
+      exportTimestamp: new Date().toISOString(),
+      lastfmUsername: username,
+    },
+  }
+}
+```
+
+## PageRank Analysis
+
+PageRank identifies influential songs:
+
+```typescript
+// From graph-server/src/analysis/pagerank.ts
+
+export function computePageRank(
+  graph: ListeningGraph,
+  options: PageRankOptions = {},
+): PageRankResult {
+  const {
+    dampingFactor: d = 0.85,
+    convergenceThreshold = 0.0001,
+    maxIterations = 100,
+  } = options
+  
+  const keys = Object.keys(graph.nodes) as SongKey[]
+  const n = keys.length
+  
+  // Initialize ranks: 1/N
+  const ranks = new Map<SongKey, number>()
+  for (const key of keys) {
+    ranks.set(key, 1 / n)
+  }
+  
+  // Iterative algorithm
+  let iterations = 0
+  let maxDelta = Infinity
+  let converged = false
+  
+  while (iterations < maxIterations && !converged) {
+    iterations++
+    const newRanks = new Map<SongKey, number>()
+    
+    // Distribute rank along weighted edges
+    for (const fromKey of keys) {
+      const node = graph.nodes[fromKey]
+      const outSum = Object.values(node.next).reduce((a, b) => a + b, 0)
+      
+      if (outSum === 0) continue  // Dangling node
+      
+      const fromRank = ranks.get(fromKey)!
+      
+      for (const [toKey, weight] of Object.entries(node.next)) {
+        const contribution = (fromRank * weight) / outSum
+        newRanks.set(
+          toKey as SongKey,
+          (newRanks.get(toKey as SongKey) ?? 0) + d * contribution
+        )
+      }
+    }
+    
+    // Apply damping
+    for (const key of keys) {
+      newRanks.set(key, (1 - d) / n + (newRanks.get(key) ?? 0))
+    }
+    
+    // Check convergence
+    maxDelta = 0
+    for (const key of keys) {
+      const delta = Math.abs(newRanks.get(key)! - ranks.get(key)!)
+      if (delta > maxDelta) maxDelta = delta
+    }
+    
+    // Update ranks
+    for (const [key, rank] of newRanks) {
+      ranks.set(key, rank)
+    }
+    
+    if (maxDelta < convergenceThreshold) {
+      converged = true
+    }
+  }
+  
+  // Write back to graph
+  for (const key of keys) {
+    graph.nodes[key].pageRank = ranks.get(key)!
+  }
+  
+  return { iterations, converged, maxDelta }
+}
+```
+
+**PageRank reveals:**
+- ★ Songs you frequently transition TO from many sources
+- ★ "Hub" songs connecting different genres/artists
+- ★ Core songs in your rotation vs. peripheral
+
+## API Access
+
+All graph endpoints require `?user=<username>`:
+
+```bash
+# Full graph
+curl "http://localhost:3001/graph?user=your_username"
+
+# Statistics
+curl "http://localhost:3001/graph/stats?user=your_username"
+
+# PageRank top 20
+curl "http://localhost:3001/graph/analysis?user=your_username&topN=20"
+
+# Node neighbors
+curl "http://localhost:3001/graph/neighbors/node_uuid?user=your_username"
+
+# Path finding
+curl "http://localhost:3001/graph/path?user=your_username&from=song1&to=song2&algorithm=strongest"
+```
+
+<Warning>
+  Returns `400` if `?user=` parameter is missing, `404` if user not found.
+</Warning>
+
+## Checkpoint Resume
+
+Interrupted imports can resume:
+
+```typescript
+interface FetchCheckpoint {
+  lastTimestamp: number      // Unix timestamp of last scrobble
+  scrobbleCount: number      // Total scrobbles fetched so far
+  fetchedAt: string          // ISO 8601 timestamp
+}
+```
+
+**Checkpoint saved every 10 pages:**
+```json
+{
+  "lastTimestamp": 1710598234,
+  "scrobbleCount": 2000,
+  "fetchedAt": "2026-03-16T10:30:34Z"
+}
+```
+
+**On resume:**
+- Loads existing scrobbles from JSON
+- Fetches only new scrobbles since `lastTimestamp`
+- Merges and deduplicates
+- Continues from where it left off
+
+<Info>
+  Checkpoints are stored in `graph-server/data/lastfm-checkpoint-{username}.json`
+</Info>
+
+## Troubleshooting
+
+<Accordion title="API Key Invalid">
+  **Symptoms:** "LASTFM_API_KEY is not set" or 401 errors
+  
+  **Solutions:**
+  - Verify key in `graph-server/.env`
+  - Restart graph server after changing `.env`
+  - Check key is active in Last.fm dashboard
+</Accordion>
+
+<Accordion title="Import Very Slow">
+  **Cause:** Rate limiting (1 req/sec = 200 scrobbles/minute)
+  
+  **Expected:**
+  - 10k scrobbles: ~10 minutes
+  - 100k scrobbles: ~90 minutes
+  
+  **Solutions:**
+  - Be patient - checkpoints allow resume
+  - Run overnight for large histories
+  - Don't increase rate limit (risks ban)
+</Accordion>
+
+<Accordion title="Import Interrupted">
+  **Symptoms:** Script stopped mid-import
+  
+  **Solutions:**
+  - Just re-run the script
+  - Checkpoint automatically resumes
+  - No need to start over
+</Accordion>
+
+<Accordion title="Database Connection Failed">
+  **Symptoms:** PostgreSQL connection errors
+  
+  **Solutions:**
+  - Ensure Docker is running: `docker compose ps`
+  - Check DATABASE_URL in `.env`
+  - Restart PostgreSQL: `docker compose restart postgres`
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Graph Visualization" href="/features/graph-visualization">
+    Explore your imported listening graph
+  </Card>
+  <Card title="Listening Graph Concept" href="/concepts/listening-graph">
+    Understand how the graph is built
+  </Card>
+  <Card title="Bandcamp" href="/sources/bandcamp">
+    Add music to play in the graph
+  </Card>
+  <Card title="Music Player" href="/features/music-player">
+    Play songs from the graph
+  </Card>
+</CardGroup>

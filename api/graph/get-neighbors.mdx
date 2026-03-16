@@ -1,0 +1,199 @@
+---
+title: Get Neighbors
+description: Retrieve immediate neighbors of a node with full details
+---
+
+## Endpoint
+
+```
+GET /graph/neighbors/:id
+```
+
+Returns the immediate neighbors (both incoming and outgoing connections) of a specific node, including full node details and edge weights.
+
+## Path Parameters
+
+<ParamField path="id" type="string" required>
+  The UUID of the node whose neighbors to retrieve
+</ParamField>
+
+## Query Parameters
+
+<ParamField query="user" type="string" required>
+  The Last.fm username whose graph to query
+</ParamField>
+
+## Response
+
+<ResponseField name="id" type="string">
+  The UUID of the requested node
+</ResponseField>
+
+<ResponseField name="node" type="CompactGraphNode">
+  Full details of the requested node (see [Get Node](/api/graph/get-node) for schema)
+</ResponseField>
+
+<ResponseField name="next" type="object">
+  Outgoing neighbors: UUID → neighbor details with edge weight
+  
+  <Expandable title="Next neighbor structure">
+    <ResponseField name="node" type="CompactGraphNode">
+      Full node details with additional `id` field
+      <Expandable title="Node properties">
+        <ResponseField name="id" type="string">
+          UUID of the neighbor node
+        </ResponseField>
+        <ResponseField name="songKey" type="string">
+          Canonical song identifier
+        </ResponseField>
+        <ResponseField name="name" type="string">
+          Track name
+        </ResponseField>
+        <ResponseField name="artists" type="string[]">
+          Artist names
+        </ResponseField>
+        <ResponseField name="totalPlays" type="integer">
+          Total plays
+        </ResponseField>
+        <ResponseField name="pageRank" type="number">
+          PageRank score
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="weight" type="integer">
+      Number of transitions from the source node to this neighbor
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="previous" type="object">
+  Incoming neighbors: UUID → neighbor details with edge weight
+  
+  <Expandable title="Previous neighbor structure">
+    <ResponseField name="node" type="CompactGraphNode">
+      Full node details with additional `id` field
+    </ResponseField>
+    
+    <ResponseField name="weight" type="integer">
+      Number of transitions from this neighbor to the source node
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+```bash Request
+curl "http://localhost:3000/graph/neighbors/a1b2c3d4-e5f6-7890-abcd-ef1234567890?user=johndoe"
+```
+</CodeGroup>
+
+<CodeGroup>
+```json 200 Success
+{
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "node": {
+    "songKey": "radiohead::karma police",
+    "name": "Karma Police",
+    "artists": ["Radiohead"],
+    "albumName": "OK Computer",
+    "totalPlays": 42,
+    "pageRank": 0.0023456,
+    "clusterId": 3,
+    "next": {
+      "b2c3d4e5-f6a7-8901-bcde-f12345678901": 5,
+      "c3d4e5f6-a7b8-9012-cdef-123456789012": 3
+    },
+    "previous": {
+      "d4e5f6a7-b8c9-0123-def1-234567890123": 4
+    },
+    "sources": ["lastfm"],
+    "playDates": ["2024-01-15T14:23:00Z"]
+  },
+  "next": {
+    "b2c3d4e5-f6a7-8901-bcde-f12345678901": {
+      "node": {
+        "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+        "songKey": "radiohead::no surprises",
+        "name": "No Surprises",
+        "artists": ["Radiohead"],
+        "albumName": "OK Computer",
+        "totalPlays": 38,
+        "pageRank": 0.0021234,
+        "clusterId": 3,
+        "next": {},
+        "previous": {},
+        "sources": ["lastfm"],
+        "playDates": []
+      },
+      "weight": 5
+    },
+    "c3d4e5f6-a7b8-9012-cdef-123456789012": {
+      "node": {
+        "id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+        "songKey": "radiohead::lucky",
+        "name": "Lucky",
+        "artists": ["Radiohead"],
+        "totalPlays": 25,
+        "pageRank": 0.0018765,
+        "clusterId": 3,
+        "next": {},
+        "previous": {},
+        "sources": ["lastfm"],
+        "playDates": []
+      },
+      "weight": 3
+    }
+  },
+  "previous": {
+    "d4e5f6a7-b8c9-0123-def1-234567890123": {
+      "node": {
+        "id": "d4e5f6a7-b8c9-0123-def1-234567890123",
+        "songKey": "radiohead::paranoid android",
+        "name": "Paranoid Android",
+        "artists": ["Radiohead"],
+        "totalPlays": 51,
+        "pageRank": 0.0028901,
+        "clusterId": 3,
+        "next": {},
+        "previous": {},
+        "sources": ["lastfm"],
+        "playDates": []
+      },
+      "weight": 4
+    }
+  }
+}
+```
+
+```json 400 Bad Request
+{
+  "error": "Missing required query parameter: user"
+}
+```
+
+```json 404 Not Found
+{
+  "error": "Node not found"
+}
+```
+</CodeGroup>
+
+## Use Cases
+
+This endpoint is useful for:
+
+- Building local graph visualizations around a specific song
+- Finding songs commonly played before or after a given track
+- Exploring musical transitions in your listening patterns
+- Identifying "hub" songs with many connections
+
+## Notes
+
+<Note>
+- The `next` field shows songs you typically listen to **after** the requested song
+- The `previous` field shows songs you typically listen to **before** the requested song
+- Edge weights represent the number of times that transition occurred
+- Each neighbor includes full node details, making this endpoint more expensive than [Get Node](/api/graph/get-node)
+</Note>

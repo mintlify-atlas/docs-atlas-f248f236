@@ -1,0 +1,544 @@
+---
+title: "Graph Frontend Component"
+description: "Interactive listening graph visualization with Sigma.js"
+---
+
+## Overview
+
+The graph frontend is a **React application** that visualizes listening graphs using **Sigma.js** for WebGL-accelerated rendering and **Graphology** for graph data structures.
+
+## Technology Stack
+
+<CardGroup cols={2}>
+  <Card title="React 19" icon="react">
+    UI framework with hooks
+  </Card>
+  <Card title="TanStack Router" icon="route">
+    File-based routing and navigation
+  </Card>
+  <Card title="Sigma.js" icon="chart-network">
+    WebGL graph rendering engine
+  </Card>
+  <Card title="Graphology" icon="diagram-project">
+    Graph data structure library
+  </Card>
+</CardGroup>
+
+## Component Architecture
+
+### Graph Component
+
+Core Sigma.js wrapper that renders the graph:
+
+```typescript title="graph-frontend/src/components/Graph.tsx" lines
+import { SigmaContainer, useLoadGraph } from '@react-sigma/core';
+import Graph from 'graphology';
+import { useEffect } from 'react';
+
+export function GraphVisualization({ graphData, onNodeClick }) {
+  const loadGraph = useLoadGraph();
+  
+  useEffect(() => {
+    const graph = new Graph();
+    
+    // Add nodes
+    for (const [id, node] of Object.entries(graphData.nodes)) {
+      graph.addNode(id, {
+        label: node.name,
+        size: Math.log(node.totalPlays + 1) * 2,
+        color: getNodeColor(node),
+        x: node.positions?.pagerank?.x || Math.random() * 100,
+        y: node.positions?.pagerank?.y || Math.random() * 100,
+      });
+    }
+    
+    // Add edges
+    for (const [id, node] of Object.entries(graphData.nodes)) {
+      for (const [targetId, weight] of Object.entries(node.next)) {
+        if (graph.hasNode(targetId)) {
+          graph.addEdge(id, targetId, {
+            size: Math.log(weight + 1),
+            color: '#666',
+          });
+        }
+      }
+    }
+    
+    loadGraph(graph);
+  }, [graphData, loadGraph]);
+  
+  return (
+    <SigmaContainer
+      style={{ height: '100vh', width: '100%' }}
+      settings={{
+        renderEdgeLabels: false,
+        defaultNodeColor: '#8B5CF6',
+        defaultEdgeColor: '#666',
+      }}
+    >
+      <GraphEvents onNodeClick={onNodeClick} />
+    </SigmaContainer>
+  );
+}
+```
+
+### Graph Context
+
+React Context for sharing graph state:
+
+```typescript title="graph-frontend/src/contexts/graphContext.tsx" lines
+import { createContext, useContext, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+
+interface GraphContextValue {
+  graph: CompactGraph | null;
+  selectedNode: string | null;
+  selectNode: (nodeId: string | null) => void;
+  searchQuery: string;
+  setSearchQuery: (query: string) => void;
+  neighborDepth: { next: number; previous: number };
+  setNeighborDepth: (depth: { next: number; previous: number }) => void;
+}
+
+const GraphContext = createContext<GraphContextValue | null>(null);
+
+export function GraphProvider({ username, children }) {
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [neighborDepth, setNeighborDepth] = useState({ next: 1, previous: 1 });
+  
+  // Fetch graph data
+  const { data: graph } = useQuery({
+    queryKey: ['graph', username],
+    queryFn: () => fetchGraph(username),
+  });
+  
+  return (
+    <GraphContext.Provider
+      value={{
+        graph,
+        selectedNode,
+        selectNode: setSelectedNode,
+        searchQuery,
+        setSearchQuery,
+        neighborDepth,
+        setNeighborDepth,
+      }}
+    >
+      {children}
+    </GraphContext.Provider>
+  );
+}
+
+export const useGraphContext = () => {
+  const context = useContext(GraphContext);
+  if (!context) throw new Error('useGraphContext must be used within GraphProvider');
+  return context;
+};
+```
+
+## Interactive Features
+
+### Node Search
+
+```typescript title="graph-frontend/src/components/SearchBar.tsx" lines
+import { Combobox } from '@base-ui/react';
+import { useGraphContext } from '../contexts/graphContext';
+
+export function SearchBar() {
+  const { graph, selectNode, searchQuery, setSearchQuery } = useGraphContext();
+  
+  const filteredNodes = Object.entries(graph?.nodes || {})
+    .filter(([, node]) =>
+      node.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      node.artists.some(artist =>
+        artist.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    )
+    .slice(0, 10);
+  
+  return (
+    <Combobox
+      value={searchQuery}
+      onChange={(value) => {
+        setSearchQuery(value);
+        const node = filteredNodes.find(([, n]) => n.name === value);
+        if (node) selectNode(node[0]);
+      }}
+    >
+      <Combobox.Input placeholder="Search for a song..." />
+      <Combobox.Options>
+        {filteredNodes.map(([id, node]) => (
+          <Combobox.Option key={id} value={node.name}>
+            <div>
+              <div className="font-semibold">{node.name}</div>
+              <div className="text-sm text-gray-500">
+                {node.artists.join(', ')}
+              </div>
+            </div>
+          </Combobox.Option>
+        ))}
+      </Combobox.Options>
+    </Combobox>
+  );
+}
+```
+
+### Node Selection Panel
+
+```typescript title="graph-frontend/src/components/SelectionPanel.tsx" lines
+import { useGraphContext } from '../contexts/graphContext';
+import { useQuery } from '@tanstack/react-query';
+
+export function SelectionPanel() {
+  const { selectedNode, selectNode } = useGraphContext();
+  
+  const { data: nodeData } = useQuery({
+    queryKey: ['node', selectedNode],
+    queryFn: () => fetchNode(selectedNode!),
+    enabled: !!selectedNode,
+  });
+  
+  if (!selectedNode || !nodeData) return null;
+  
+  return (
+    <div className="absolute right-0 top-0 h-full w-96 bg-white shadow-xl p-6">
+      <button
+        onClick={() => selectNode(null)}
+        className="absolute top-4 right-4"
+      >
+        ×
+      </button>
+      
+      <div>
+        <h2 className="text-2xl font-bold">{nodeData.node.name}</h2>
+        <p className="text-gray-600">{nodeData.node.artists.join(', ')}</p>
+        
+        {nodeData.node.albumName && (
+          <p className="text-sm text-gray-500 mt-2">
+            {nodeData.node.albumName}
+          </p>
+        )}
+        
+        <div className="mt-6 grid grid-cols-2 gap-4">
+          <div>
+            <div className="text-sm text-gray-500">Total Plays</div>
+            <div className="text-2xl font-bold">{nodeData.node.totalPlays}</div>
+          </div>
+          
+          <div>
+            <div className="text-sm text-gray-500">PageRank</div>
+            <div className="text-2xl font-bold">
+              {nodeData.node.pageRank?.toFixed(4) || 'N/A'}
+            </div>
+          </div>
+        </div>
+        
+        <div className="mt-6">
+          <h3 className="text-lg font-semibold mb-2">Next Songs</h3>
+          <div className="space-y-2">
+            {Object.entries(nodeData.next)
+              .sort(([, a], [, b]) => b.weight - a.weight)
+              .slice(0, 5)
+              .map(([id, { node, weight }]) => (
+                <button
+                  key={id}
+                  onClick={() => selectNode(id)}
+                  className="block w-full text-left p-2 hover:bg-gray-100 rounded"
+                >
+                  <div className="font-medium">{node.name}</div>
+                  <div className="text-sm text-gray-500">
+                    Played {weight}x after this
+                  </div>
+                </button>
+              ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+### Depth Control Sliders
+
+```typescript title="graph-frontend/src/components/DepthSliders.tsx" lines
+import { Slider } from '@base-ui/react';
+import { useGraphContext } from '../contexts/graphContext';
+
+export function DepthSliders() {
+  const { neighborDepth, setNeighborDepth } = useGraphContext();
+  
+  return (
+    <div className="absolute bottom-4 left-4 bg-white p-4 rounded-lg shadow-lg">
+      <div className="space-y-4">
+        <div>
+          <label className="text-sm font-medium">Next Songs Depth</label>
+          <Slider
+            value={neighborDepth.next}
+            onValueChange={(value) =>
+              setNeighborDepth({ ...neighborDepth, next: value })
+            }
+            min={1}
+            max={5}
+            step={1}
+          />
+          <div className="text-xs text-gray-500 mt-1">
+            Showing {neighborDepth.next} level{neighborDepth.next > 1 ? 's' : ''}
+          </div>
+        </div>
+        
+        <div>
+          <label className="text-sm font-medium">Previous Songs Depth</label>
+          <Slider
+            value={neighborDepth.previous}
+            onValueChange={(value) =>
+              setNeighborDepth({ ...neighborDepth, previous: value })
+            }
+            min={1}
+            max={5}
+            step={1}
+          />
+          <div className="text-xs text-gray-500 mt-1">
+            Showing {neighborDepth.previous} level{neighborDepth.previous > 1 ? 's' : ''}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+## Graph Algorithms
+
+### Neighbor Expansion
+
+```typescript title="graph-frontend/src/lib/graph-utils.ts" lines
+import { DirectedGraph } from 'graphology';
+
+export function expandNeighbors(
+  graph: DirectedGraph,
+  nodeId: string,
+  depth: { next: number; previous: number }
+): Set<string> {
+  const visited = new Set<string>([nodeId]);
+  
+  // Expand outgoing edges
+  let currentLevel = new Set([nodeId]);
+  for (let i = 0; i < depth.next; i++) {
+    const nextLevel = new Set<string>();
+    
+    for (const node of currentLevel) {
+      for (const neighbor of graph.outNeighbors(node)) {
+        if (!visited.has(neighbor)) {
+          visited.add(neighbor);
+          nextLevel.add(neighbor);
+        }
+      }
+    }
+    
+    currentLevel = nextLevel;
+  }
+  
+  // Expand incoming edges
+  currentLevel = new Set([nodeId]);
+  for (let i = 0; i < depth.previous; i++) {
+    const prevLevel = new Set<string>();
+    
+    for (const node of currentLevel) {
+      for (const neighbor of graph.inNeighbors(node)) {
+        if (!visited.has(neighbor)) {
+          visited.add(neighbor);
+          prevLevel.add(neighbor);
+        }
+      }
+    }
+    
+    currentLevel = prevLevel;
+  }
+  
+  return visited;
+}
+```
+
+### Path Finding
+
+```typescript title="graph-frontend/src/lib/path-finding.ts" lines
+import { bidirectional } from 'graphology-shortest-path';
+import { DirectedGraph } from 'graphology';
+
+export function findShortestPath(
+  graph: DirectedGraph,
+  fromId: string,
+  toId: string
+): string[] | null {
+  return bidirectional(graph, fromId, toId);
+}
+
+export function findStrongestPath(
+  graph: DirectedGraph,
+  fromId: string,
+  toId: string
+): { path: string[]; totalWeight: number } | null {
+  // Dijkstra with edge weights as priorities
+  const distances = new Map<string, number>();
+  const previous = new Map<string, string>();
+  const unvisited = new Set(graph.nodes());
+  
+  distances.set(fromId, 0);
+  
+  while (unvisited.size > 0) {
+    // Find node with min distance
+    let current: string | null = null;
+    let minDist = Infinity;
+    
+    for (const node of unvisited) {
+      const dist = distances.get(node) || Infinity;
+      if (dist < minDist) {
+        minDist = dist;
+        current = node;
+      }
+    }
+    
+    if (!current || current === toId) break;
+    
+    unvisited.delete(current);
+    
+    // Update neighbors
+    for (const neighbor of graph.outNeighbors(current)) {
+      if (!unvisited.has(neighbor)) continue;
+      
+      const edge = graph.edge(current, neighbor);
+      const weight = graph.getEdgeAttribute(edge, 'weight') || 1;
+      const newDist = (distances.get(current) || 0) + (1 / weight);  // Inverse weight
+      
+      if (newDist < (distances.get(neighbor) || Infinity)) {
+        distances.set(neighbor, newDist);
+        previous.set(neighbor, current);
+      }
+    }
+  }
+  
+  // Reconstruct path
+  if (!previous.has(toId)) return null;
+  
+  const path: string[] = [];
+  let current: string | undefined = toId;
+  
+  while (current) {
+    path.unshift(current);
+    current = previous.get(current);
+  }
+  
+  return {
+    path,
+    totalWeight: distances.get(toId) || 0,
+  };
+}
+```
+
+## Rendering Performance
+
+### Node Styling
+
+```typescript
+function getNodeColor(node: CompactGraphNode): string {
+  if (node.clusterId !== undefined) {
+    // Color by cluster
+    const hue = (node.clusterId * 137.5) % 360;
+    return `hsl(${hue}, 70%, 60%)`;
+  }
+  
+  if (node.pageRank !== undefined) {
+    // Color by PageRank (purple gradient)
+    const intensity = Math.min(node.pageRank * 1000, 1);
+    return `rgb(${139 + intensity * 100}, ${92 - intensity * 40}, ${246 - intensity * 40})`;
+  }
+  
+  return '#8B5CF6';  // Default purple
+}
+
+function getNodeSize(node: CompactGraphNode): number {
+  // Size by play count
+  return Math.log(node.totalPlays + 1) * 2 + 5;
+}
+```
+
+### Edge Styling
+
+```typescript
+function getEdgeSize(weight: number): number {
+  return Math.log(weight + 1) * 0.5;
+}
+
+function getEdgeColor(weight: number): string {
+  // Stronger edges are more visible
+  const opacity = Math.min(weight / 10, 1);
+  return `rgba(102, 102, 102, ${opacity})`;
+}
+```
+
+## API Integration
+
+### Fetching Graph Data
+
+```typescript title="graph-frontend/src/lib/api.ts" lines
+const API_BASE = 'http://localhost:3001';
+
+export async function fetchGraph(username: string) {
+  const response = await fetch(`${API_BASE}/graph?user=${username}`);
+  if (!response.ok) throw new Error('Failed to fetch graph');
+  return response.json();
+}
+
+export async function fetchNode(nodeId: string, username: string) {
+  const response = await fetch(
+    `${API_BASE}/graph/node/${nodeId}?user=${username}`
+  );
+  if (!response.ok) throw new Error('Failed to fetch node');
+  return response.json();
+}
+
+export async function fetchNeighbors(nodeId: string, username: string) {
+  const response = await fetch(
+    `${API_BASE}/graph/neighbors/${nodeId}?user=${username}`
+  );
+  if (!response.ok) throw new Error('Failed to fetch neighbors');
+  return response.json();
+}
+```
+
+## Layout Modes
+
+The frontend supports multiple pre-computed layout modes:
+
+<Tabs>
+  <Tab title="PageRank Radial">
+    Nodes arranged radially with distance from center based on PageRank score. High-PageRank nodes are in the center.
+  </Tab>
+  
+  <Tab title="MDS (Multidimensional Scaling)">
+    Nodes positioned based on graph distance similarity. Songs that are closer in the graph appear closer visually.
+  </Tab>
+  
+  <Tab title="Weighted MDS">
+    Similar to MDS but considers edge weights. Strongly connected songs appear closer.
+  </Tab>
+</Tabs>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Graph Visualization Feature" icon="chart-network" href="/features/graph-visualization">
+    User guide for the visualization
+  </Card>
+  <Card title="Graph API Reference" icon="terminal" href="/api/graph/get-graph">
+    Explore the API endpoints
+  </Card>
+  <Card title="Local Development" icon="code" href="/developers/local-development">
+    Start developing
+  </Card>
+  <Card title="Testing" icon="vial" href="/developers/testing">
+    Test the graph frontend
+  </Card>
+</CardGroup>

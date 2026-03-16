@@ -1,0 +1,397 @@
+---
+title: Music Sources
+description: How Rotations integrates with Bandcamp, Spotify, YouTube, and Last.fm
+---
+
+## Overview
+
+Rotations is designed to aggregate music from multiple platforms into a unified experience. Each source contributes differently to your library and listening graph.
+
+<CardGroup cols={2}>
+  <Card title="Bandcamp" icon="music">
+    ✅ Fully supported - Direct streaming and import
+  </Card>
+  <Card title="Last.fm" icon="chart-line">
+    ✅ Fully supported - Complete scrobble history
+  </Card>
+  <Card title="YouTube" icon="youtube">
+    🚧 In progress - Video/audio streaming
+  </Card>
+  <Card title="Spotify" icon="spotify">
+    🚧 In progress - Playlist sync and playback
+  </Card>
+</CardGroup>
+
+## Source Types
+
+```typescript
+// From site/src/shared/types.ts
+export type PlaylistSource = "spotify" | "youtube" | "bandcamp"
+
+export type AudioSource =
+  | { type: "stream"; url: string }      // Bandcamp direct stream
+  | { type: "youtube"; id: string }      // YouTube video ID
+  | { type: "spotify"; id: string }      // Spotify track ID
+```
+
+## Source Integration
+
+<Tabs>
+  <Tab title="Bandcamp">
+    **Status:** ✅ Fully supported
+    
+    Bandcamp provides direct audio streams without authentication:
+    
+    ### How It Works
+    
+    1. User pastes Bandcamp album URL
+    2. Scraper fetches album metadata and track info
+    3. Direct MP3 stream URLs extracted
+    4. Tracks cached locally for offline playback
+    
+    ### Implementation
+    
+    ```typescript
+    // From site/src/components/AddMusicButton.tsx
+    const getApiEndpoint = (url: string): string => {
+      if (url.includes("spotify.com")) {
+        return "/api/spotify/scrape"
+      }
+      if (url.includes("youtube.com") || url.includes("youtu.be")) {
+        return "/api/youtube/scrape"
+      }
+      return "/api/bandcamp/scrape"  // Default to Bandcamp
+    }
+
+    const handleSubmit = async () => {
+      const endpoint = getApiEndpoint(inputValue)
+      const res = await fetch(`${endpoint}?url=${encodeURIComponent(inputValue)}`)
+      const data = await res.json()
+
+      // Save to local database
+      db.insertPlaylist(data.playlist)
+      db.insertTracks(data.tracks, data.playlist.id)
+
+      // Start playing
+      setPlaylistAndTracks({ playlistId: data.playlist.id })
+    }
+    ```
+    
+    ### Data Extracted
+    
+    ```typescript
+    interface BandcampPageData {
+      artist: string
+      trackinfo: BandcampTrackInfo[]
+      url: string
+      albumArt: string
+      keywords?: string[]  // Genre tags
+    }
+    ```
+    
+    <Tip>
+      Bandcamp tracks are automatically cached after first stream using the `musicCache` service
+    </Tip>
+  </Tab>
+  
+  <Tab title="Last.fm">
+    **Status:** ✅ Fully supported
+    
+    Last.fm provides complete scrobble history for graph construction:
+    
+    ### How It Works
+    
+    1. User provides Last.fm username
+    2. Server fetches all scrobbles via `user.getRecentTracks` API
+    3. Scrobbles processed chronologically to build graph
+    4. PageRank and clusters computed
+    5. Results stored in PostgreSQL
+    
+    ### Implementation
+    
+    ```typescript
+    // From graph-server/src/ingestion/lastfm-fetcher.ts
+    export async function fetchLastfmScrobbles(
+      client: LastfmClient,
+      options: FetchOptions,
+    ): Promise<RawScrobble[]> {
+      const log = options.onProgress ?? console.log
+      
+      // First request to get total pages
+      const firstPage = await client.request<RecentTracksResponse>(
+        "user.getRecentTracks",
+        {
+          user: client.username,
+          limit: String(TRACKS_PER_PAGE),  // 200
+          page: "1",
+        },
+      )
+
+      const totalPages = parseInt(firstPage.recenttracks["@attr"].totalPages, 10)
+      const totalTracks = parseInt(firstPage.recenttracks["@attr"].total, 10)
+
+      log(`Found ${totalTracks} scrobbles across ${totalPages} pages`)
+
+      // Fetch remaining pages with rate limiting
+      for (let page = 2; page <= totalPages; page++) {
+        await sleep(RATE_LIMIT_MS)  // 1000ms between requests
+        
+        const response = await client.request<RecentTracksResponse>(
+          "user.getRecentTracks",
+          { user: client.username, limit: String(TRACKS_PER_PAGE), page: String(page) }
+        )
+        
+        // Parse and accumulate scrobbles...
+      }
+      
+      return allScrobbles
+    }
+    ```
+    
+    ### Rate Limiting
+    
+    <Warning>
+      Last.fm API has strict rate limits. Rotations uses 1 req/sec (safe) vs. 5/sec max.
+    </Warning>
+    
+    ### Checkpoint Resume
+    
+    ```typescript
+    // Supports resuming after interruption
+    interface FetchCheckpoint {
+      lastTimestamp: number
+      scrobbleCount: number
+      fetchedAt: string
+    }
+    
+    // Saved every 10 pages
+    if (page % 10 === 0) {
+      await writeFile(
+        checkpointPath,
+        JSON.stringify(checkpoint, null, 2)
+      )
+    }
+    ```
+    
+    ### API Key
+    
+    Get your key from [Last.fm API Account Creation](https://www.last.fm/api/account/create)
+  </Tab>
+  
+  <Tab title="Spotify">
+    **Status:** 🚧 In progress
+    
+    Spotify integration provides playlist sync and native playback:
+    
+    ### Planned Features
+    
+    - ✅ OAuth authentication
+    - ✅ Fetch user playlists
+    - ✅ Spotify Web Playback SDK integration
+    - 🚧 Recently played tracks for graph
+    - 🚧 Full playlist history
+    
+    ### Current Implementation
+    
+    ```typescript
+    // From site/src/hooks/PlayerContext.tsx
+    
+    // For Spotify playlists, use Spotify's playback API
+    if (playlist?.source === "spotify") {
+      const playlistSpotifyId = playlist.id.replace("play-spotify-", "")
+      const trackSpotifyId = currentTrack.id.replace("track-spotify-", "")
+
+      if (!spotifyDeviceId) {
+        console.error("No Spotify device available")
+        return
+      }
+
+      await fetch("/api/spotify/play", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          device_id: spotifyDeviceId,
+          context_uri: `spotify:playlist:${playlistSpotifyId}`,
+          offset: { uri: `spotify:track:${trackSpotifyId}` },
+          position_ms: positionMs,
+        }),
+      })
+    }
+    ```
+    
+    ### Required Scopes
+    
+    ```typescript
+    const scopes = [
+      "user-read-private",
+      "user-read-email",
+      "playlist-read-private",
+      "playlist-read-collaborative",
+      "user-read-recently-played",
+      "streaming",
+      "user-read-playback-state",
+      "user-modify-playback-state"
+    ]
+    ```
+    
+    <Note>
+      Spotify integration is functional but still being refined. See [Spotify source docs](/sources/spotify) for details.
+    </Note>
+  </Tab>
+  
+  <Tab title="YouTube">
+    **Status:** 🚧 In progress
+    
+    YouTube support enables streaming video/audio content:
+    
+    ### Planned Features
+    
+    - ✅ Basic video ID extraction
+    - ✅ Audio stream proxy
+    - 🚧 Playlist import
+    - 🚧 Audio-only streaming
+    - 🚧 Quality selection
+    
+    ### Current Implementation
+    
+    ```typescript
+    // From site/src/hooks/PlayerContext.tsx
+    if (currentTrack.audio.type === "youtube") {
+      audioUrl = `/api/youtube/stream?id=${currentTrack.audio.id}`
+    }
+    
+    // Audio element plays proxied stream
+    audioRef.current.src = audioUrl
+    audioRef.current.load()
+    ```
+    
+    <Note>
+      YouTube integration is experimental. See [YouTube source docs](/sources/youtube) for current status.
+    </Note>
+  </Tab>
+</Tabs>
+
+## Source Priority
+
+When the same song exists across multiple sources:
+
+1. **Graph Construction** - All sources contribute edges (more data = better graph)
+2. **Playback** - Source determined by playlist origin
+3. **Metadata** - Prefer sources with richer metadata (Last.fm > Spotify > Bandcamp)
+
+## Cross-Source Matching
+
+Songs are matched across sources using SongKey normalization:
+
+```typescript
+// From graph-server/src/graph/types.ts
+export function toSongKey(artist: string, track: string): SongKey {
+  return `${artist.toLowerCase().trim()}::${track.toLowerCase().trim()}`
+}
+
+// Examples:
+toSongKey("The Beatles", "Hey Jude")  // "the beatles::hey jude"
+toSongKey("the beatles", "HEY JUDE")  // "the beatles::hey jude" (same!)
+toSongKey("Beatles", "Hey Jude")      // "beatles::hey jude" (different!)
+```
+
+<Warning>
+  Artist name variations ("The Beatles" vs "Beatles") aren't automatically resolved. Future enhancement: fuzzy matching.
+</Warning>
+
+## Source-Specific Storage
+
+```typescript
+// GraphNode tracks which sources contributed data
+export interface GraphNode {
+  sources: ListeningSource[]  // ["lastfm", "spotify"]
+  sourcePlays?: Partial<Record<ListeningSource, number>>
+  // ...
+}
+
+// Example node from both Last.fm and Spotify:
+{
+  name: "Hey Jude",
+  artists: ["The Beatles"],
+  sources: ["lastfm", "spotify"],
+  sourcePlays: {
+    lastfm: 42,
+    spotify: 8
+  },
+  totalPlays: 50
+}
+```
+
+## Adding New Sources
+
+To add a new music source:
+
+<Steps>
+  <Step title="Define AudioSource Type">
+    Add to `site/src/shared/types.ts`:
+    ```typescript
+    export type AudioSource =
+      | { type: "stream"; url: string }
+      | { type: "youtube"; id: string }
+      | { type: "spotify"; id: string }
+      | { type: "soundcloud"; id: string }  // New!
+    ```
+  </Step>
+  
+  <Step title="Create Scraper API">
+    Add endpoint in `site/src/pages/api/[source]/scrape.ts`
+  </Step>
+  
+  <Step title="Handle in Player">
+    Update `PlayerContext.tsx` to handle new audio source type
+  </Step>
+  
+  <Step title="Add to Graph Server (Optional)">
+    If source provides listening history, add ingestion logic to `graph-server/src/ingestion/`
+  </Step>
+</Steps>
+
+## Source Configuration
+
+<Accordion title="Bandcamp">
+  No configuration needed - works out of the box!
+</Accordion>
+
+<Accordion title="Last.fm">
+  Set `LASTFM_API_KEY` in `graph-server/.env`
+  
+  ```env
+  LASTFM_API_KEY=your_key_here
+  ```
+</Accordion>
+
+<Accordion title="Spotify">
+  Set Spotify credentials in `site/.env`:
+  
+  ```env
+  PUBLIC_SPOTIFY_CLIENT_ID=your_client_id
+  SPOTIFY_CLIENT_SECRET=your_client_secret
+  PUBLIC_SPOTIFY_REDIRECT_URI=http://localhost:4321/api/spotify/callback
+  ```
+</Accordion>
+
+<Accordion title="YouTube">
+  No configuration needed currently (uses direct streaming)
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Bandcamp Integration" href="/sources/bandcamp">
+    Import and play Bandcamp albums
+  </Card>
+  <Card title="Last.fm Integration" href="/sources/lastfm">
+    Build your listening graph from scrobbles
+  </Card>
+  <Card title="Spotify Integration" href="/sources/spotify">
+    Sync Spotify playlists
+  </Card>
+  <Card title="YouTube Integration" href="/sources/youtube">
+    Stream YouTube content
+  </Card>
+</CardGroup>

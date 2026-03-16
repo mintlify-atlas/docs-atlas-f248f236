@@ -1,0 +1,514 @@
+---
+title: "Deployment Guide"
+description: "Deploy Rotations to production environments"
+---
+
+## Overview
+
+Rotations consists of three deployable components that can be hosted separately or together:
+
+<CardGroup cols={3}>
+  <Card title="Music Player" icon="music">
+    Static site (Astro SSG)
+  </Card>
+  <Card title="Graph Server" icon="server">
+    Node.js API server
+  </Card>
+  <Card title="Graph Frontend" icon="chart-network">
+    Static React app
+  </Card>
+</CardGroup>
+
+## Building for Production
+
+### Build All Packages
+
+```bash
+# From repo root
+pnpm -r build
+```
+
+This creates production-ready builds in each package's `dist/` directory.
+
+### Individual Builds
+
+<Tabs>
+  <Tab title="Music Player">
+    ```bash
+    cd site
+    pnpm build
+    
+    # Output: site/dist/
+    # Static HTML, CSS, JS ready for any host
+    ```
+  </Tab>
+  
+  <Tab title="Graph Server">
+    ```bash
+    cd graph-server
+    pnpm build
+    
+    # Output: graph-server/dist/
+    # Compiled TypeScript ready for Node.js
+    ```
+  </Tab>
+  
+  <Tab title="Graph Frontend">
+    ```bash
+    cd graph-frontend
+    pnpm build
+    
+    # Output: graph-frontend/dist/
+    # Optimized React bundle
+    ```
+  </Tab>
+</Tabs>
+
+## Deployment Options
+
+### Music Player Deployment
+
+The music player is a **static site** that can be deployed to any static hosting provider:
+
+<CardGroup cols={2}>
+  <Card title="Vercel" icon="triangle">
+    Zero-config deployment with git integration
+  </Card>
+  <Card title="Netlify" icon="netlify">
+    Continuous deployment from GitHub
+  </Card>
+  <Card title="Cloudflare Pages" icon="cloudflare">
+    Global CDN with edge functions
+  </Card>
+  <Card title="GitHub Pages" icon="github">
+    Free static hosting
+  </Card>
+</CardGroup>
+
+#### Vercel Deployment
+
+<Steps>
+  <Step title="Install Vercel CLI">
+    ```bash
+    npm install -g vercel
+    ```
+  </Step>
+  
+  <Step title="Deploy from site directory">
+    ```bash
+    cd site
+    vercel --prod
+    ```
+  </Step>
+  
+  <Step title="Configure build settings">
+    Create `vercel.json` if needed:
+    
+    ```json title="site/vercel.json"
+    {
+      "buildCommand": "pnpm build",
+      "outputDirectory": "dist",
+      "devCommand": "pnpm dev"
+    }
+    ```
+  </Step>
+</Steps>
+
+### Graph Server Deployment
+
+The graph server is a **Node.js application** that requires:
+- Node.js 20+ runtime
+- Postgres database
+- Environment variables
+
+<Tabs>
+  <Tab title="Fly.io">
+    <Steps>
+      <Step title="Install flyctl">
+        ```bash
+        curl -L https://fly.io/install.sh | sh
+        ```
+      </Step>
+      
+      <Step title="Launch app">
+        ```bash
+        cd graph-server
+        fly launch
+        ```
+      </Step>
+      
+      <Step title="Add Postgres">
+        ```bash
+        fly postgres create
+        fly postgres attach <postgres-app-name>
+        ```
+      </Step>
+      
+      <Step title="Set secrets">
+        ```bash
+        fly secrets set LASTFM_API_KEY=your_key
+        fly secrets set DATABASE_URL=your_connection_string
+        ```
+      </Step>
+      
+      <Step title="Deploy">
+        ```bash
+        fly deploy
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+  
+  <Tab title="Railway">
+    <Steps>
+      <Step title="Connect GitHub repo">
+        Link your repository at [railway.app](https://railway.app)
+      </Step>
+      
+      <Step title="Add Postgres service">
+        Click **New** → **Database** → **PostgreSQL**
+      </Step>
+      
+      <Step title="Configure build">
+        Set in Railway dashboard:
+        - Build command: `cd graph-server && pnpm install && pnpm build`
+        - Start command: `cd graph-server && node dist/server/index.js`
+      </Step>
+      
+      <Step title="Add environment variables">
+        - `LASTFM_API_KEY`
+        - `DATABASE_URL` (auto-set by Railway)
+        - `GRAPH_SERVER_PORT=3001`
+      </Step>
+    </Steps>
+  </Tab>
+  
+  <Tab title="Docker">
+    ```dockerfile title="graph-server/Dockerfile"
+    FROM node:20-alpine
+    
+    WORKDIR /app
+    
+    # Install pnpm
+    RUN npm install -g pnpm@10.28.0
+    
+    # Copy package files
+    COPY package.json pnpm-lock.yaml ./
+    RUN pnpm install --frozen-lockfile --prod
+    
+    # Copy source
+    COPY . .
+    RUN pnpm build
+    
+    # Expose port
+    EXPOSE 3001
+    
+    # Start server
+    CMD ["node", "dist/server/index.js"]
+    ```
+    
+    Build and run:
+    ```bash
+    docker build -t rotations-graph-server .
+    docker run -p 3001:3001 \
+      -e LASTFM_API_KEY=your_key \
+      -e DATABASE_URL=your_db_url \
+      rotations-graph-server
+    ```
+  </Tab>
+</Tabs>
+
+### Graph Frontend Deployment
+
+The graph frontend is a **static React app** that can be deployed to:
+
+<CardGroup cols={2}>
+  <Card title="Vercel" icon="triangle">
+    Automatic deployment from git
+  </Card>
+  <Card title="Netlify" icon="netlify">
+    CDN with instant rollbacks
+  </Card>
+  <Card title="Cloudflare Pages" icon="cloudflare">
+    Edge-optimized delivery
+  </Card>
+  <Card title="S3 + CloudFront" icon="aws">
+    AWS static hosting
+  </Card>
+</CardGroup>
+
+#### Netlify Deployment
+
+```bash
+cd graph-frontend
+npm install -g netlify-cli
+netlify deploy --prod --dir=dist
+```
+
+## Environment Variables
+
+### Music Player (site/)
+
+```env title=".env"
+# Spotify Integration (optional)
+SPOTIFY_CLIENT_ID=your_spotify_client_id
+SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
+SPOTIFY_REDIRECT_URI=https://yourdomain.com/api/spotify/callback
+
+# Graph Server URL (for embedded graph)
+PUBLIC_GRAPH_SERVER_URL=https://api.yourdomain.com
+```
+
+### Graph Server (graph-server/)
+
+```env title=".env"
+# Required
+LASTFM_API_KEY=your_lastfm_api_key
+DATABASE_URL=postgresql://user:pass@host:5432/db
+
+# Optional
+GRAPH_SERVER_PORT=3001
+NODE_ENV=production
+```
+
+### Graph Frontend (graph-frontend/)
+
+```env title=".env"
+# Graph Server API URL
+VITE_API_URL=https://api.yourdomain.com
+```
+
+## Database Setup
+
+### Postgres Schema
+
+The graph server automatically creates tables on first run, but you can pre-create them:
+
+```sql title="schema.sql" lines
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  username VARCHAR(255) UNIQUE NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE nodes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  song_key VARCHAR(512) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  artists TEXT[] NOT NULL,
+  album_name VARCHAR(255),
+  lastfm_url VARCHAR(512),
+  mbid VARCHAR(36),
+  total_plays INTEGER DEFAULT 0,
+  page_rank DOUBLE PRECISION,
+  cluster_id INTEGER,
+  image_url VARCHAR(512),
+  play_dates TIMESTAMP[],
+  positions JSONB,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_nodes_user_id ON nodes(user_id);
+CREATE INDEX idx_nodes_song_key ON nodes(song_key);
+
+CREATE TABLE edges (
+  from_key VARCHAR(512) NOT NULL,
+  to_key VARCHAR(512) NOT NULL,
+  weight INTEGER NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (from_key, to_key, user_id)
+);
+
+CREATE INDEX idx_edges_user_id ON edges(user_id);
+
+CREATE TABLE metadata (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  total_scrobbles INTEGER,
+  date_range_from TIMESTAMP,
+  date_range_to TIMESTAMP,
+  export_timestamp TIMESTAMP,
+  lastfm_username VARCHAR(255)
+);
+
+CREATE TABLE pipeline_jobs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  username VARCHAR(255) NOT NULL,
+  status VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  started_at TIMESTAMP,
+  completed_at TIMESTAMP
+);
+
+CREATE INDEX idx_pipeline_jobs_username ON pipeline_jobs(username);
+CREATE INDEX idx_pipeline_jobs_status ON pipeline_jobs(status);
+```
+
+### Managed Postgres
+
+<CardGroup cols={2}>
+  <Card title="Supabase" icon="database">
+    Free tier with 500MB storage
+  </Card>
+  <Card title="Railway" icon="train">
+    $5/month with 1GB storage
+  </Card>
+  <Card title="Neon" icon="bolt">
+    Serverless Postgres with free tier
+  </Card>
+  <Card title="AWS RDS" icon="aws">
+    Managed Postgres on AWS
+  </Card>
+</CardGroup>
+
+## Performance Optimization
+
+### Music Player
+
+<Steps>
+  <Step title="Enable compression">
+    Configure your host to serve gzip/brotli compression.
+  </Step>
+  
+  <Step title="Cache static assets">
+    Set cache headers for long-term caching:
+    ```
+    Cache-Control: public, max-age=31536000, immutable
+    ```
+  </Step>
+  
+  <Step title="Optimize images">
+    Use WebP format and responsive sizes.
+  </Step>
+</Steps>
+
+### Graph Server
+
+<Steps>
+  <Step title="Connection pooling">
+    ```typescript title="graph-server/src/graph/database.ts"
+    import { Pool } from 'pg';
+    
+    const pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 2000,
+    });
+    ```
+  </Step>
+  
+  <Step title="Add caching layer">
+    Use Redis for frequently accessed graphs:
+    ```typescript
+    const cachedGraph = await redis.get(`graph:${userId}`);
+    if (cachedGraph) return JSON.parse(cachedGraph);
+    
+    const graph = await db.loadGraph(userId);
+    await redis.setex(`graph:${userId}`, 3600, JSON.stringify(graph));
+    ```
+  </Step>
+  
+  <Step title="Enable pagination">
+    Always use `limit` and `offset` for large graphs.
+  </Step>
+</Steps>
+
+## Monitoring
+
+### Health Checks
+
+```typescript title="graph-server/src/server/app.ts"
+app.get('/health', async (c) => {
+  try {
+    await db.client.query('SELECT 1');
+    return c.json({ status: 'healthy', timestamp: new Date().toISOString() });
+  } catch (err) {
+    return c.json({ status: 'unhealthy', error: err.message }, 500);
+  }
+});
+```
+
+### Logging
+
+```typescript
+import { logger } from 'hono/logger';
+
+app.use('*', logger());
+```
+
+### Error Tracking
+
+Integrate Sentry for error monitoring:
+
+```typescript
+import * as Sentry from '@sentry/node';
+
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  environment: process.env.NODE_ENV,
+});
+
+app.onError((err, c) => {
+  Sentry.captureException(err);
+  return c.json({ error: 'Internal server error' }, 500);
+});
+```
+
+## Security
+
+### CORS Configuration
+
+```typescript title="graph-server/src/server/app.ts"
+import { cors } from 'hono/cors';
+
+app.use('*', cors({
+  origin: [
+    'https://yourdomain.com',
+    'https://graph.yourdomain.com'
+  ],
+  allowMethods: ['GET', 'POST'],
+  credentials: true,
+}));
+```
+
+### Rate Limiting
+
+```typescript
+import { rateLimiter } from 'hono-rate-limiter';
+
+app.use('*', rateLimiter({
+  windowMs: 15 * 60 * 1000,  // 15 minutes
+  max: 100,  // 100 requests per window
+}));
+```
+
+### Environment Secrets
+
+<Warning>
+  Never commit `.env` files or expose secrets in client-side code.
+</Warning>
+
+Use your hosting platform's secrets management:
+- Vercel: `vercel env add`
+- Netlify: Environment variables in dashboard
+- Fly.io: `fly secrets set`
+- Railway: Add in project settings
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Monitoring Dashboard" icon="chart-line">
+    Set up observability with Grafana or Datadog
+  </Card>
+  <Card title="CI/CD Pipeline" icon="circle-play">
+    Automate testing and deployment
+  </Card>
+  <Card title="Backup Strategy" icon="database">
+    Schedule Postgres backups
+  </Card>
+  <Card title="Scale Horizontally" icon="server">
+    Deploy multiple graph server instances
+  </Card>
+</CardGroup>

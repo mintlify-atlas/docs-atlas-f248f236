@@ -1,0 +1,517 @@
+---
+title: "Graph Server Component"
+description: "Deep dive into the graph API server and data pipeline"
+---
+
+## Overview
+
+The graph server is a **Hono-based REST API** that constructs directed, weighted listening graphs from Last.fm scrobble history and serves them to clients.
+
+## Technology Stack
+
+<CardGroup cols={2}>
+  <Card title="Hono" icon="bolt">
+    Lightweight web framework for Node.js
+  </Card>
+  <Card title="Postgres 16" icon="database">
+    Relational database for graph storage
+  </Card>
+  <Card title="Last.fm API" icon="lastfm">
+    Source for scrobble history data
+  </Card>
+  <Card title="TypeScript" icon="code">
+    Type-safe API and algorithms
+  </Card>
+</CardGroup>
+
+## Core Data Types
+
+### SongKey - Canonical Identity
+
+```typescript title="graph-server/src/graph/types.ts" lines
+/**
+ * Canonical song identity: `lowercase(artist)::lowercase(track_name)`.
+ * Used to match the same song across data sources.
+ */
+export type SongKey = `${string}::${string}`;
+
+export function toSongKey(artist: string, track: string): SongKey {
+  return `${artist.toLowerCase().trim()}::${track.toLowerCase().trim()}`;
+}
+
+// Example: "radiohead::paranoid android"
+```
+
+### GraphNode - Song with Edges
+
+```typescript title="graph-server/src/graph/types.ts" lines
+export interface GraphNode {
+  name: string;
+  artists: string[];
+  albumName?: string;
+  lastfmUrl?: string;
+  mbid?: string;  // MusicBrainz ID
+  
+  // Weighted edges
+  next: Record<SongKey, number>;      // Outgoing: this song → next
+  previous: Record<SongKey, number>;  // Incoming: prev song → this
+  
+  totalPlays: number;
+  sources: ListeningSource[];
+  sourcePlays?: Partial<Record<ListeningSource, number>>;
+  
+  // Analysis results
+  pageRank?: number;
+  clusterId?: number;
+  
+  // Visualization
+  imageUrl?: string;
+  playDates: string[];  // ISO 8601 timestamps
+  positions?: LayoutPositions;
+}
+```
+
+### ListeningGraph
+
+```typescript title="graph-server/src/graph/types.ts"
+export interface ListeningGraph {
+  nodes: Record<SongKey, GraphNode>;
+  metadata: {
+    totalScrobbles: number;
+    dateRange: { from: string; to: string };
+    exportTimestamp: string;
+    lastfmUsername?: string;
+  };
+}
+```
+
+## Data Pipeline
+
+The pipeline transforms raw scrobbles into an enriched listening graph:
+
+<Steps>
+  <Step title="Fetch Scrobbles">
+    ```typescript title="graph-server/src/ingestion/lastfm-fetcher.ts" lines
+    export async function fetchLastfmScrobbles(
+      client: LastfmClient,
+      options: { username: string; onProgress?: (msg: string) => void }
+    ): Promise<RawScrobble[]> {
+      const scrobbles: RawScrobble[] = [];
+      let page = 1;
+      let totalPages = 1;
+      
+      while (page <= totalPages) {
+        const response = await client.getRecentTracks({
+          limit: 200,
+          page,
+          from: 0,  // All history
+        });
+        
+        totalPages = response.recenttracks['@attr'].totalPages;
+        scrobbles.push(...response.recenttracks.track);
+        
+        options.onProgress?.(
+          `Fetched page ${page}/${totalPages} (${scrobbles.length} scrobbles)`
+        );
+        
+        page++;
+        await sleep(250);  // Rate limiting
+      }
+      
+      return scrobbles;
+    }
+    ```
+  </Step>
+  
+  <Step title="Build Graph">
+    ```typescript title="graph-server/src/graph/build-graph.ts" lines
+    export function buildGraph(input: {
+      lastfmScrobbles: RawScrobble[];
+      lastfmUsername: string;
+    }): ListeningGraph {
+      const nodes: Record<SongKey, GraphNode> = {};
+      
+      // Sort chronologically
+      const sorted = input.lastfmScrobbles.sort(
+        (a, b) => parseInt(a.date.uts) - parseInt(b.date.uts)
+      );
+      
+      // Build nodes and edges
+      for (let i = 0; i < sorted.length; i++) {
+        const scrobble = sorted[i];
+        const key = toSongKey(scrobble.artist['#text'], scrobble.name);
+        
+        // Initialize node if doesn't exist
+        if (!nodes[key]) {
+          nodes[key] = {
+            name: scrobble.name,
+            artists: [scrobble.artist['#text']],
+            albumName: scrobble.album['#text'],
+            next: {},
+            previous: {},
+            totalPlays: 0,
+            sources: ['lastfm'],
+            playDates: [],
+          };
+        }
+        
+        // Increment play count
+        nodes[key].totalPlays++;
+        nodes[key].playDates.push(
+          new Date(parseInt(scrobble.date.uts) * 1000).toISOString()
+        );
+        
+        // Add edge to next song
+        if (i < sorted.length - 1) {
+          const nextScrobble = sorted[i + 1];
+          const nextKey = toSongKey(
+            nextScrobble.artist['#text'],
+            nextScrobble.name
+          );
+          
+          // Increment edge weight
+          nodes[key].next[nextKey] = (nodes[key].next[nextKey] || 0) + 1;
+          // Mirror edge in previous
+          if (!nodes[nextKey]) {
+            nodes[nextKey] = { /* initialize */ };
+          }
+          nodes[nextKey].previous[key] = (nodes[nextKey].previous[key] || 0) + 1;
+        }
+      }
+      
+      return { nodes, metadata: { /* ... */ } };
+    }
+    ```
+  </Step>
+  
+  <Step title="Enrich Graph">
+    ```typescript title="graph-server/src/analysis/enrich.ts" lines
+    export function enrichGraph(
+      graph: ListeningGraph,
+      options?: { topN?: number }
+    ): { summary: EnrichmentSummary } {
+      // Compute PageRank
+      const pageRankResults = computePageRank(graph, {
+        dampingFactor: 0.85,
+        maxIterations: 100,
+        convergenceThreshold: 1e-6,
+      });
+      
+      // Apply PageRank scores to nodes
+      for (const [key, score] of Object.entries(pageRankResults.scores)) {
+        if (graph.nodes[key]) {
+          graph.nodes[key].pageRank = score;
+        }
+      }
+      
+      // Detect clusters
+      const clusters = detectClusters(graph);
+      for (const [key, clusterId] of Object.entries(clusters)) {
+        if (graph.nodes[key]) {
+          graph.nodes[key].clusterId = clusterId;
+        }
+      }
+      
+      // Compute statistics
+      const stats = computeStats(graph);
+      
+      return {
+        summary: {
+          pageRank: pageRankResults,
+          clusters,
+          stats,
+          topSongs: getTopSongs(graph, options?.topN || 20),
+        },
+      };
+    }
+    ```
+  </Step>
+  
+  <Step title="Compute Layouts">
+    ```typescript title="graph-server/src/analysis/layout.ts" lines
+    export function computeAllLayouts(
+      graph: ListeningGraph
+    ): Record<LayoutMode, Record<SongKey, { x: number; y: number }>> {
+      return {
+        pagerank: computePageRankLayout(graph),
+        mds: computeMDSLayout(graph),
+        'weighted-mds': computeWeightedMDSLayout(graph),
+      };
+    }
+    
+    function computePageRankLayout(graph: ListeningGraph) {
+      const positions: Record<SongKey, { x: number; y: number }> = {};
+      const nodes = Object.entries(graph.nodes)
+        .sort(([, a], [, b]) => (b.pageRank || 0) - (a.pageRank || 0));
+      
+      // Radial layout with PageRank determining radius
+      nodes.forEach(([key, node], index) => {
+        const angle = (index / nodes.length) * 2 * Math.PI;
+        const radius = 100 + (node.pageRank || 0) * 1000;
+        
+        positions[key] = {
+          x: Math.cos(angle) * radius,
+          y: Math.sin(angle) * radius,
+        };
+      });
+      
+      return positions;
+    }
+    ```
+  </Step>
+  
+  <Step title="Persist to Database">
+    ```typescript title="graph-server/src/graph/database.ts" lines
+    export class GraphDatabase {
+      async saveGraph(graph: ListeningGraph, userId: number) {
+        await this.client.query('BEGIN');
+        
+        try {
+          // Save nodes
+          for (const [songKey, node] of Object.entries(graph.nodes)) {
+            await this.client.query(
+              `INSERT INTO nodes (
+                user_id, song_key, name, artists, album_name,
+                total_plays, page_rank, cluster_id, positions
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+              [
+                userId,
+                songKey,
+                node.name,
+                node.artists,
+                node.albumName,
+                node.totalPlays,
+                node.pageRank,
+                node.clusterId,
+                JSON.stringify(node.positions),
+              ]
+            );
+          }
+          
+          // Save edges
+          for (const [fromKey, node] of Object.entries(graph.nodes)) {
+            for (const [toKey, weight] of Object.entries(node.next)) {
+              await this.client.query(
+                `INSERT INTO edges (from_key, to_key, weight, user_id)
+                 VALUES ($1, $2, $3, $4)`,
+                [fromKey, toKey, weight, userId]
+              );
+            }
+          }
+          
+          await this.client.query('COMMIT');
+        } catch (err) {
+          await this.client.query('ROLLBACK');
+          throw err;
+        }
+      }
+    }
+    ```
+  </Step>
+</Steps>
+
+## API Endpoints
+
+The server exposes REST endpoints defined in `src/server/app.ts`:
+
+### Graph Retrieval
+
+```typescript title="graph-server/src/server/app.ts" lines
+app.get('/graph', async (c) => {
+  const user = c.req.query('user');
+  if (!user) return c.json({ error: 'Missing query parameter: user' }, 400);
+  
+  const userId = await db.getUserId(user);
+  if (!userId) return c.json({ error: 'User not found' }, 404);
+  
+  const graph = await db.loadGraphCompact(userId);
+  return c.json(graph);
+});
+
+app.get('/graph/node/:id', async (c) => {
+  const user = c.req.query('user');
+  const nodeId = c.req.param('id');
+  
+  const userId = await db.getUserId(user);
+  const node = await db.getNodeById(nodeId, userId);
+  
+  if (!node) return c.json({ error: 'Node not found' }, 404);
+  return c.json(node);
+});
+```
+
+### Pipeline Management
+
+```typescript title="graph-server/src/server/app.ts" lines
+app.post('/pipeline/run', async (c) => {
+  const { username } = await c.req.json();
+  
+  // Check for existing active job
+  const existingJobId = await db.getActiveJob(username);
+  if (existingJobId) {
+    return c.json({ jobId: existingJobId }, 202);
+  }
+  
+  // Queue new job
+  const jobId = await db.enqueuePipelineJob(username);
+  return c.json({ jobId }, 202);
+});
+
+app.get('/pipeline/run/:jobId', async (c) => {
+  const jobId = c.req.param('jobId');
+  const job = await db.getPipelineJob(jobId);
+  
+  if (!job) return c.json({ error: 'Job not found' }, 404);
+  return c.json(job);
+});
+```
+
+## PageRank Algorithm
+
+```typescript title="graph-server/src/analysis/pagerank.ts" lines
+export function computePageRank(
+  graph: ListeningGraph,
+  options: {
+    dampingFactor?: number;
+    maxIterations?: number;
+    convergenceThreshold?: number;
+  } = {}
+): { scores: Record<SongKey, number>; converged: boolean } {
+  const d = options.dampingFactor || 0.85;
+  const maxIter = options.maxIterations || 100;
+  const threshold = options.convergenceThreshold || 1e-6;
+  
+  const nodes = Object.keys(graph.nodes);
+  const n = nodes.length;
+  
+  // Initialize scores
+  let scores: Record<SongKey, number> = {};
+  nodes.forEach(key => (scores[key] = 1 / n));
+  
+  let converged = false;
+  let iter = 0;
+  
+  while (iter < maxIter && !converged) {
+    const newScores: Record<SongKey, number> = {};
+    
+    // Compute new score for each node
+    for (const key of nodes) {
+      const node = graph.nodes[key];
+      
+      // Sum contributions from incoming edges
+      let sum = 0;
+      for (const [prevKey, weight] of Object.entries(node.previous)) {
+        const prevNode = graph.nodes[prevKey];
+        const outDegree = Object.values(prevNode.next).reduce((a, b) => a + b, 0);
+        sum += (scores[prevKey] * weight) / outDegree;
+      }
+      
+      newScores[key] = (1 - d) / n + d * sum;
+    }
+    
+    // Check convergence
+    const diff = nodes.reduce(
+      (acc, key) => acc + Math.abs(newScores[key] - scores[key]),
+      0
+    );
+    
+    if (diff < threshold) {
+      converged = true;
+    }
+    
+    scores = newScores;
+    iter++;
+  }
+  
+  return { scores, converged };
+}
+```
+
+## Cluster Detection
+
+```typescript title="graph-server/src/analysis/clusters.ts" lines
+export function detectClusters(
+  graph: ListeningGraph
+): Record<SongKey, number> {
+  const clusters: Record<SongKey, number> = {};
+  const visited = new Set<SongKey>();
+  let clusterId = 0;
+  
+  // BFS to find connected components
+  function bfs(startKey: SongKey) {
+    const queue = [startKey];
+    visited.add(startKey);
+    
+    while (queue.length > 0) {
+      const key = queue.shift()!;
+      clusters[key] = clusterId;
+      
+      const node = graph.nodes[key];
+      
+      // Visit neighbors
+      for (const nextKey of Object.keys(node.next)) {
+        if (!visited.has(nextKey)) {
+          visited.add(nextKey);
+          queue.push(nextKey);
+        }
+      }
+      
+      for (const prevKey of Object.keys(node.previous)) {
+        if (!visited.has(prevKey)) {
+          visited.add(prevKey);
+          queue.push(prevKey);
+        }
+      }
+    }
+  }
+  
+  // Find all clusters
+  for (const key of Object.keys(graph.nodes)) {
+    if (!visited.has(key)) {
+      bfs(key);
+      clusterId++;
+    }
+  }
+  
+  return clusters;
+}
+```
+
+## Environment Configuration
+
+```typescript title="graph-server/src/config.ts" lines
+import { config } from 'dotenv';
+
+config();
+
+export function requireEnv(key: string): string {
+  const value = process.env[key];
+  if (!value) {
+    throw new Error(`${key} is not set in environment`);
+  }
+  return value;
+}
+
+export const CONFIG = {
+  LASTFM_API_KEY: requireEnv('LASTFM_API_KEY'),
+  DATABASE_URL: requireEnv('DATABASE_URL'),
+  PORT: parseInt(process.env.GRAPH_SERVER_PORT || '3001', 10),
+};
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Graph Frontend" icon="chart-network" href="/developers/graph-frontend">
+    Learn about the visualization
+  </Card>
+  <Card title="API Reference" icon="terminal" href="/api/overview">
+    Explore all API endpoints
+  </Card>
+  <Card title="Local Development" icon="code" href="/developers/local-development">
+    Start developing
+  </Card>
+  <Card title="Testing" icon="vial" href="/developers/testing">
+    Test the graph server
+  </Card>
+</CardGroup>

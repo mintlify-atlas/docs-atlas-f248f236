@@ -1,0 +1,132 @@
+---
+title: Get Stats
+description: Retrieve summary statistics for a user's graph
+---
+
+## Endpoint
+
+```
+GET /graph/stats
+```
+
+Returns high-level summary statistics about a user's listening graph, including node count, edge count, and metadata.
+
+## Query Parameters
+
+<ParamField query="user" type="string" required>
+  The Last.fm username whose graph statistics to retrieve
+</ParamField>
+
+## Response
+
+<ResponseField name="totalNodes" type="integer">
+  Total number of unique songs (nodes) in the graph
+</ResponseField>
+
+<ResponseField name="totalEdges" type="integer">
+  Total number of directed edges (transitions) in the graph
+</ResponseField>
+
+<ResponseField name="metadata" type="object">
+  Graph metadata
+  
+  <Expandable title="GraphMetadata properties">
+    <ResponseField name="totalScrobbles" type="integer">
+      Total number of scrobbles used to build this graph
+    </ResponseField>
+    
+    <ResponseField name="dateRange" type="object">
+      Time range of scrobble data
+      <Expandable>
+        <ResponseField name="from" type="string">
+          ISO 8601 timestamp of earliest scrobble
+        </ResponseField>
+        <ResponseField name="to" type="string">
+          ISO 8601 timestamp of latest scrobble
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="exportTimestamp" type="string">
+      ISO 8601 timestamp when this graph was built
+    </ResponseField>
+    
+    <ResponseField name="lastfmUsername" type="string">
+      Last.fm username
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+```bash Request
+curl "http://localhost:3000/graph/stats?user=johndoe"
+```
+</CodeGroup>
+
+<CodeGroup>
+```json 200 Success
+{
+  "totalNodes": 1523,
+  "totalEdges": 8742,
+  "metadata": {
+    "totalScrobbles": 15234,
+    "dateRange": {
+      "from": "2020-01-01T00:00:00Z",
+      "to": "2024-03-15T23:59:59Z"
+    },
+    "exportTimestamp": "2024-03-16T10:30:00Z",
+    "lastfmUsername": "johndoe"
+  }
+}
+```
+
+```json 400 Bad Request
+{
+  "error": "Missing required query parameter: user"
+}
+```
+
+```json 404 Not Found
+{
+  "error": "User not found"
+}
+```
+</CodeGroup>
+
+## Understanding the Metrics
+
+### Total Nodes
+
+Each unique song (artist + track combination) is represented as one node in the graph. This number indicates the breadth of your musical taste.
+
+### Total Edges
+
+Edges represent sequential listening transitions. A higher edge count relative to node count suggests:
+- More repetitive listening patterns
+- Stronger sequential preferences (album listening, playlists)
+- Longer listening sessions
+
+### Total Scrobbles vs. Nodes
+
+The difference between `totalScrobbles` and `totalNodes` indicates how much you replay songs:
+- High ratio (10:1 or more): You frequently replay favorite songs
+- Low ratio (2:1 or less): You explore diverse music with less repetition
+
+## Use Cases
+
+This endpoint is useful for:
+
+- Dashboard summaries and overview displays
+- Quick health checks on graph data
+- Comparing listening patterns over time (after rebuilding graphs)
+- Lightweight monitoring without fetching the full graph
+
+## Notes
+
+<Note>
+- This endpoint is much faster than fetching the full graph
+- Edge count represents unique directed transitions, not total transition occurrences
+- For detailed analysis including rankings and clusters, use [Get Analysis](/api/graph/get-analysis)
+</Note>

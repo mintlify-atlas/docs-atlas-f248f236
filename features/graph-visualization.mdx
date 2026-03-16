@@ -1,0 +1,524 @@
+---
+title: Graph Visualization
+description: Explore your listening patterns through interactive graph visualization
+---
+
+## Overview
+
+The Rotations graph visualization transforms your listening history into an interactive network where you can:
+
+- See how songs connect through listening patterns
+- Discover clusters of related music
+- Find paths between any two songs
+- Identify your most influential tracks via PageRank
+
+<Info>
+  The graph is built from your Last.fm scrobbles, Spotify history, and local playback data.
+</Info>
+
+## Graph Structure
+
+### Nodes and Edges
+
+```typescript
+// From graph-server/src/graph/types.ts
+
+// Nodes = Songs
+export interface GraphNode {
+  name: string
+  artists: string[]
+  albumName?: string
+  imageUrl?: string
+  
+  // Weighted edges
+  next: Record<SongKey, number>      // A → B (weight = transition count)
+  previous: Record<SongKey, number>  // B ← A (mirror of next)
+  
+  // Analysis
+  totalPlays: number
+  pageRank?: number
+  clusterId?: number
+  
+  // Layout
+  positions?: {
+    pagerank?: { x: number; y: number }
+    mds?: { x: number; y: number }
+    "weighted-mds"?: { x: number; y: number }
+  }
+}
+```
+
+**Example:**
+```typescript
+// "Song A" played before "Song B" three times
+graph.nodes["artist a::song a"].next["artist b::song b"] = 3
+graph.nodes["artist b::song b"].previous["artist a::song a"] = 3
+```
+
+## Visualization Interface
+
+The graph UI is built with React and Sigma.js:
+
+```typescript
+// From site/src/components/GraphView.tsx
+import { SigmaContainer, useLoadGraph, useSigma } from "@react-sigma/core"
+
+export default function GraphView() {
+  const [selectedNode, setSelectedNode] = useState<SelectedNode | null>(null)
+  const [hoveredNode, setHoveredNode] = useState(null)
+  const [hoveredEdge, setHoveredEdge] = useState(null)
+
+  return (
+    <div className="relative w-full h-full">
+      <SigmaContainer
+        style={{ width: "100%", height: "100%", background: "#0B0B0B" }}
+        settings={{
+          renderLabels: true,
+          labelRenderedSizeThreshold: 8,
+          defaultNodeType: "circle",
+          labelFont: "DM Mono, monospace",
+        }}
+      >
+        <GraphInner
+          onSelectNode={setSelectedNode}
+          onHoverNode={setHoveredNode}
+          onHoverEdge={setHoveredEdge}
+        />
+        
+        {/* Search bar */}
+        <div className="absolute top-12 left-4">
+          <SearchBarInner onSelect={setNavigateTarget} />
+        </div>
+      </SigmaContainer>
+
+      {/* Hover tooltips */}
+      {hoveredNode && !selectedNode && (
+        <HoverTooltip node={hoveredNode} />
+      )}
+      
+      {/* Selection panel */}
+      {selectedNode && (
+        <NodeDetailPanel node={selectedNode} />
+      )}
+    </div>
+  )
+}
+```
+
+### Key Features
+
+<CardGroup cols={2}>
+  <Card title="Pan & Zoom" icon="magnifying-glass">
+    Drag to pan, scroll to zoom, explore the entire graph
+  </Card>
+  <Card title="Node Selection" icon="bullseye">
+    Click nodes to see details and neighbors
+  </Card>
+  <Card title="Search" icon="search">
+    Find songs by name or artist instantly
+  </Card>
+  <Card title="Hover Tooltips" icon="circle-info">
+    Hover for quick metadata without clicking
+  </Card>
+</CardGroup>
+
+## Graph Loading
+
+```typescript
+// From site/src/components/graph/useGraphData.ts
+export function useGraphData() {
+  const [graph, setGraph] = useState<Graph | null>(null)
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading")
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    // Fetch graph from server
+    fetch(`http://localhost:3001/graph?user=${username}`)
+      .then((res) => res.json())
+      .then((data) => {
+        // Convert to Sigma graph format
+        const sigmaGraph = new Graph()
+        
+        for (const [uuid, node] of Object.entries(data.nodes)) {
+          sigmaGraph.addNode(uuid, {
+            x: node.positions?.pagerank?.x ?? 0,
+            y: node.positions?.pagerank?.y ?? 0,
+            size: Math.log(node.totalPlays + 1) * 2,
+            label: node.name,
+            color: getClusterColor(node.clusterId),
+          })
+        }
+        
+        // Add edges...
+        setGraph(sigmaGraph)
+        setState("ready")
+      })
+      .catch((err) => {
+        setError(err.message)
+        setState("error")
+      })
+  }, [username])
+
+  return { graph, state, error }
+}
+```
+
+## Node Visualization
+
+### Size
+
+Node size = `log(totalPlays + 1) * scale`
+
+- Larger nodes = more plays
+- Logarithmic scaling prevents extreme size differences
+- Minimum size ensures visibility
+
+### Color
+
+Nodes colored by cluster:
+
+```typescript
+function getClusterColor(clusterId: number): string {
+  const colors = [
+    "#FF6B6B",  // Red
+    "#4ECDC4",  // Teal
+    "#45B7D1",  // Blue
+    "#FFA07A",  // Orange
+    "#98D8C8",  // Mint
+    "#F7DC6F",  // Yellow
+    "#BB8FCE",  // Purple
+  ]
+  return colors[clusterId % colors.length]
+}
+```
+
+Clusters reveal:
+- Genre groupings
+- Artist catalog exploration
+- Temporal listening periods
+
+### Labels
+
+Labels shown for:
+- Selected node (white, large)
+- Neighbor nodes (gray, medium)
+- High-zoom nodes (size threshold)
+
+```typescript
+sigma.setSetting("nodeReducer", (node, data) => {
+  if (node === selectedKey) {
+    return { ...data, color: "#ffffff", highlighted: true, zIndex: 1 }
+  }
+  if (neighborSet.has(node)) {
+    return { ...data, color: "#999", zIndex: 0 }
+  }
+  return { ...data, color: "#333", label: "", zIndex: -1 }  // Dim others
+})
+```
+
+## Edge Visualization
+
+### Width
+
+Edge width proportional to weight:
+
+```typescript
+const edgeWidth = Math.sqrt(weight) * 0.5
+```
+
+### Color
+
+Edges colored by relevance:
+- **White** (`rgba(255,255,255,0.4)`) - Connected to selected node
+- **Gray** (`rgba(255,255,255,0.08)`) - Background edges
+- **Hidden** - Edges not connected to selected node
+
+### Direction
+
+Edges are directed (A → B) but rendered as lines. Direction visible in:
+- Edge hover tooltip ("A → 3x → B")
+- Node detail panel (incoming vs outgoing neighbors)
+
+## Interaction Modes
+
+### Selection Mode
+
+```typescript
+// From site/src/components/graph/GraphEvents.tsx
+function GraphEvents({ onSelectNode, hiddenClusters, filter }) {
+  const sigma = useSigma()
+
+  useEffect(() => {
+    const handleClickNode = (event: { node: string }) => {
+      const nodeKey = event.node
+      const attrs = sigma.getGraph().getNodeAttributes(nodeKey)
+      
+      // Gather neighbors
+      const neighbors: SelectedNode["neighbors"] = []
+      sigma.getGraph().forEachOutEdge(nodeKey, (edge, edgeAttrs, source, target) => {
+        neighbors.push({
+          key: target,
+          attrs: sigma.getGraph().getNodeAttributes(target),
+          weight: edgeAttrs.weight,
+          direction: "outgoing",
+        })
+      })
+      
+      sigma.getGraph().forEachInEdge(nodeKey, (edge, edgeAttrs, source) => {
+        neighbors.push({
+          key: source,
+          attrs: sigma.getGraph().getNodeAttributes(source),
+          weight: edgeAttrs.weight,
+          direction: "incoming",
+        })
+      })
+      
+      neighbors.sort((a, b) => b.weight - a.weight)
+      
+      onSelectNode({ key: nodeKey, attrs, neighbors })
+    }
+
+    sigma.on("clickNode", handleClickNode)
+    return () => sigma.off("clickNode", handleClickNode)
+  }, [sigma, onSelectNode])
+
+  // Apply visual filters...
+}
+```
+
+**On node click:**
+1. Highlight selected node (white)
+2. Highlight neighbors (gray)
+3. Dim all other nodes
+4. Show only connected edges
+5. Display detail panel
+
+### Hover Mode
+
+Hover shows quick tooltip without changing selection:
+
+```typescript
+{hoveredNode && !selectedNode && (
+  <div
+    className="absolute z-30 pointer-events-none"
+    style={{ left: hoveredNode.x + 12, top: hoveredNode.y - 10 }}
+  >
+    <div className="bg-[#1a1a1a] border border-white/15 rounded-lg px-3 py-2">
+      {hoveredNode.imageUrl && (
+        <img src={hoveredNode.imageUrl} className="w-8 h-8 rounded" />
+      )}
+      <p className="text-white/90 text-xs font-mono">
+        {hoveredNode.label}
+      </p>
+      <p className="text-white/50 text-[10px]">
+        {hoveredNode.artists.join(", ")}
+      </p>
+      <span className="text-white/40 text-[10px]">
+        {hoveredNode.totalPlays} plays
+      </span>
+      <span className="text-white/40 text-[10px]">
+        PR: {hoveredNode.pageRank.toFixed(4)}
+      </span>
+    </div>
+  </div>
+)}
+```
+
+## Node Detail Panel
+
+When a node is selected, the detail panel shows:
+
+```typescript
+// From site/src/components/graph/NodeDetailPanel.tsx
+export function NodeDetailPanel({ node, onNavigate }) {
+  const { key, attrs, neighbors } = node
+
+  return (
+    <div className="absolute right-4 top-12 w-80 bg-[#1a1a1a] rounded-lg">
+      {/* Header */}
+      <div className="p-4">
+        {attrs.imageUrl && <img src={attrs.imageUrl} className="w-16 h-16" />}
+        <h3 className="text-white font-mono">{attrs.label}</h3>
+        <p className="text-white/50 text-sm">{attrs.artists.join(", ")}</p>
+      </div>
+      
+      {/* Stats */}
+      <div className="px-4 py-2 border-t border-white/10">
+        <div className="flex justify-between">
+          <span>Total Plays</span>
+          <span>{attrs.totalPlays}</span>
+        </div>
+        <div className="flex justify-between">
+          <span>PageRank</span>
+          <span>{attrs.pageRank?.toFixed(4)}</span>
+        </div>
+        <div className="flex justify-between">
+          <span>Cluster</span>
+          <span>{attrs.clusterId}</span>
+        </div>
+      </div>
+      
+      {/* Neighbors */}
+      <div className="px-4 py-2 border-t border-white/10">
+        <h4>Connected Songs ({neighbors.length})</h4>
+        {neighbors.slice(0, 10).map((neighbor) => (
+          <div
+            key={neighbor.key}
+            onClick={() => onNavigate(neighbor.key)}
+            className="flex items-center gap-2 cursor-pointer hover:bg-white/5"
+          >
+            <span className="text-white/70 text-sm">
+              {neighbor.attrs.label}
+            </span>
+            <span className="text-white/40 text-xs">
+              {neighbor.direction === "outgoing" ? "→" : "←"} {neighbor.weight}x
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+```
+
+**Features:**
+- Click neighbor to navigate
+- See incoming vs outgoing connections
+- View edge weights (transition counts)
+- Scroll for full neighbor list
+
+## Search
+
+```typescript
+// From site/src/components/graph/SearchBar.tsx
+export function SearchBarInner({ onSelect }) {
+  const [query, setQuery] = useState("")
+  const [results, setResults] = useState<SearchResult[]>([])
+  const sigma = useSigma()
+
+  const handleSearch = useCallback(
+    debounce((q: string) => {
+      if (!q) {
+        setResults([])
+        return
+      }
+
+      const graph = sigma.getGraph()
+      const matches: SearchResult[] = []
+
+      graph.forEachNode((key, attrs) => {
+        const label = attrs.label.toLowerCase()
+        const artist = attrs.artists?.join(" ").toLowerCase() ?? ""
+        const query = q.toLowerCase()
+
+        if (label.includes(query) || artist.includes(query)) {
+          matches.push({ key, label: attrs.label, artists: attrs.artists })
+        }
+      })
+
+      setResults(matches.slice(0, 50))  // Limit results
+    }, 300),
+    [sigma]
+  )
+
+  return (
+    <div className="relative">
+      <input
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value)
+          handleSearch(e.target.value)
+        }}
+        placeholder="Search songs..."
+        className="w-64 px-3 py-2 bg-[#1a1a1a] text-white rounded"
+      />
+      
+      {results.length > 0 && (
+        <div className="absolute top-full mt-1 w-full bg-[#1a1a1a] rounded">
+          {results.map((result) => (
+            <div
+              key={result.key}
+              onClick={() => {
+                onSelect(result.key)
+                setQuery("")
+                setResults([])
+              }}
+              className="px-3 py-2 cursor-pointer hover:bg-white/5"
+            >
+              <p className="text-white text-sm">{result.label}</p>
+              <p className="text-white/50 text-xs">{result.artists.join(", ")}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+```
+
+**Search features:**
+- Fuzzy matching on song name and artist
+- Real-time results (debounced)
+- Click result to navigate
+- Keyboard navigation (future)
+
+## Layout Modes
+
+The graph supports multiple layout algorithms:
+
+### PageRank Layout (Default)
+
+Nodes positioned radially based on PageRank score:
+- High PageRank = center
+- Low PageRank = periphery
+- Angle = cluster ID
+
+### MDS Layout
+
+Multidimensional scaling based on graph distance:
+- Preserves topological structure
+- Similar songs positioned nearby
+
+### Weighted MDS Layout
+
+MDS weighted by edge strength:
+- Frequently connected songs closer together
+- Accounts for transition intensity
+
+<Note>
+  Layouts are pre-computed server-side and stored in the database for instant loading.
+</Note>
+
+## Performance
+
+<CardGroup cols={2}>
+  <Card title="Efficient Rendering" icon="bolt">
+    Sigma.js uses WebGL for 60fps with 10k+ nodes
+  </Card>
+  <Card title="Progressive Loading" icon="spinner">
+    Pagination support for massive graphs
+  </Card>
+  <Card title="Smart Filtering" icon="filter">
+    Hide low-play nodes for clarity
+  </Card>
+  <Card title="Memoization" icon="memory">
+    React optimization prevents unnecessary re-renders
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Listening Graph Concept" href="/concepts/listening-graph">
+    Understand how the graph is built
+  </Card>
+  <Card title="Last.fm Integration" href="/sources/lastfm">
+    Import your complete listening history
+  </Card>
+  <Card title="Music Player" href="/features/music-player">
+    Play songs directly from the graph
+  </Card>
+  <Card title="Rotations" href="/concepts/rotations">
+    See how rotations feed the graph
+  </Card>
+</CardGroup>

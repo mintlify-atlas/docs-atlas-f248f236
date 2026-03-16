@@ -1,0 +1,247 @@
+---
+title: Run Full Pipeline
+description: Queue an asynchronous job to fetch and build a graph
+---
+
+## Endpoint
+
+```
+POST /pipeline/run
+```
+
+Queues a complete pipeline job that fetches Last.fm scrobbles and builds the listening graph asynchronously. Returns immediately with a job ID for status tracking.
+
+## Request Body
+
+<ParamField body="username" type="string" required>
+  The Last.fm username to process
+</ParamField>
+
+## Response
+
+<ResponseField name="jobId" type="string">
+  UUID of the queued pipeline job
+</ResponseField>
+
+HTTP Status: **202 Accepted**
+
+## Examples
+
+<CodeGroup>
+```bash cURL
+curl -X POST http://localhost:3000/pipeline/run \
+  -H "Content-Type: application/json" \
+  -d '{"username": "johndoe"}'
+```
+
+```javascript JavaScript
+const response = await fetch('http://localhost:3000/pipeline/run', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ username: 'johndoe' })
+});
+
+const data = await response.json();
+const jobId = data.jobId;
+
+// Poll for status
+const checkStatus = async () => {
+  const statusRes = await fetch(`http://localhost:3000/pipeline/run/${jobId}`);
+  return await statusRes.json();
+};
+```
+
+```python Python
+import requests
+import time
+
+# Queue the job
+response = requests.post(
+    'http://localhost:3000/pipeline/run',
+    json={'username': 'johndoe'}
+)
+
+job_id = response.json()['jobId']
+
+# Poll for completion
+while True:
+    status = requests.get(f'http://localhost:3000/pipeline/run/{job_id}')
+    job = status.json()
+    
+    if job['status'] in ['succeeded', 'failed']:
+        break
+    
+    time.sleep(2)
+
+print(f"Job {job['status']}")
+```
+</CodeGroup>
+
+<CodeGroup>
+```json 202 Accepted (New Job)
+{
+  "jobId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}
+```
+
+```json 202 Accepted (Existing Job)
+{
+  "jobId": "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+}
+```
+
+```json 400 Bad Request
+{
+  "error": "Missing required field: username"
+}
+```
+
+```json 500 Internal Server Error
+{
+  "error": "Pipeline failed: Database connection error"
+}
+```
+</CodeGroup>
+
+## Job Processing
+
+The pipeline job:
+
+1. **Queues the job** with status `"queued"`
+2. **Returns immediately** with a job ID (202 Accepted)
+3. **Background worker** picks up the job and:
+   - Changes status to `"running"`
+   - Fetches scrobbles from Last.fm
+   - Builds and enriches the graph
+   - Stores results in the database
+   - Updates status to `"succeeded"` or `"failed"`
+
+## Duplicate Job Handling
+
+<Note>
+If a job is already queued or running for the same username, the endpoint returns the existing job ID instead of creating a duplicate.
+</Note>
+
+This prevents:
+- Multiple concurrent fetches for the same user
+- Wasted API quota on Last.fm
+- Race conditions in graph building
+
+## Worker Configuration
+
+The pipeline worker is configurable via `ServerConfig`:
+
+```typescript
+const app = createApp({
+  databaseUrl: process.env.DATABASE_URL,
+  enablePipelineWorker: true,        // default: true
+  pipelineWorkerPollIntervalMs: 2000 // default: 2000 (2 seconds)
+});
+```
+
+## Monitoring Job Status
+
+Use [GET /pipeline/run/:jobId](/api/pipeline/get-job-status) to check job progress:
+
+```bash
+curl http://localhost:3000/pipeline/run/a1b2c3d4-e5f6-7890-abcd-ef1234567890
+```
+
+## Job Lifecycle
+
+<Steps>
+  <Step title="Queued">
+    Job created and waiting for worker to pick it up
+  </Step>
+  
+  <Step title="Running">
+    Worker is actively fetching scrobbles and building the graph
+  </Step>
+  
+  <Step title="Succeeded">
+    Job completed successfully - graph is ready to query
+  </Step>
+  
+  <Step title="Failed">
+    Job failed due to an error (Last.fm API error, invalid data, etc.)
+  </Step>
+</Steps>
+
+## Typical Timeline
+
+Expected processing times:
+
+| Scrobbles | Fetch Time | Build Time | Total  |
+|-----------|------------|------------|--------|
+| 1,000     | 10s        | 2s         | ~15s   |
+| 10,000    | 1 min      | 10s        | ~1.5 min|
+| 50,000    | 5 min      | 60s        | ~6 min |
+| 100,000+  | 10+ min    | 2-5 min    | ~15 min|
+
+<Note>
+Fetch time depends on Last.fm API response times and rate limiting.
+</Note>
+
+## Error Handling
+
+If a job fails:
+- Status changes to `"failed"`
+- Error is logged server-side
+- Job record persists for debugging
+- Graph data may be partially updated (if build phase failed)
+
+Common failure reasons:
+- Last.fm API errors (user not found, rate limits)
+- Network timeouts
+- Insufficient scrobble data
+- Database errors
+
+## Advantages Over Synchronous Endpoints
+
+<CardGroup cols={2}>
+  <Card title="No Timeouts" icon="clock">
+    Long-running jobs won't timeout HTTP connections
+  </Card>
+  
+  <Card title="Background Processing" icon="server">
+    Free up the request thread immediately
+  </Card>
+  
+  <Card title="Progress Tracking" icon="list-check">
+    Poll job status to show progress to users
+  </Card>
+  
+  <Card title="Retry Logic" icon="rotate">
+    Failed jobs can be retried without re-submitting
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+<Note>
+**For production use:**
+- Poll job status every 2-5 seconds (not more frequently)
+- Implement exponential backoff for status polling
+- Show progress indicators to users
+- Handle both success and failure states
+- Set reasonable timeouts (15 minutes for large graphs)
+</Note>
+
+## Next Steps
+
+After job completes:
+
+<CardGroup cols={2}>
+  <Card title="Get Graph" icon="chart-network" href="/api/graph/get-graph">
+    Retrieve the built graph
+  </Card>
+  <Card title="Get Analysis" icon="chart-line" href="/api/graph/get-analysis">
+    View analysis results
+  </Card>
+</CardGroup>
+
+## Related Endpoints
+
+- [GET /pipeline/run/:jobId](/api/pipeline/get-job-status) - Check job status
+- [POST /pipeline/fetch/lastfm](/api/pipeline/fetch-lastfm) - Fetch only (synchronous)
+- [POST /pipeline/build](/api/pipeline/build-graph) - Build only (synchronous)

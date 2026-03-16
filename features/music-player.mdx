@@ -1,0 +1,438 @@
+---
+title: Music Player
+description: Explore the Rotations music player features and interface
+---
+
+## Overview
+
+The Rotations music player is a browser-based application built with Astro and React, featuring:
+
+- ✅ Local-first storage with automatic persistence
+- ✅ Multi-source playback (Bandcamp, Spotify, YouTube)
+- ✅ Automatic offline caching
+- ✅ Smart rotation management
+- ✅ Rich metadata display
+
+<Info>
+  The player runs entirely in your browser using IndexedDB for storage. No account or backend required!
+</Info>
+
+## Player Interface
+
+### Main Player View
+
+The main view displays:
+
+```typescript
+// From site/src/components/PlayerView.tsx
+function MusicView() {
+  const {
+    playlist,
+    tracks,
+    currentTrackIndex,
+    currentTimeMs,
+    isPlaying,
+    currentTrack,
+    togglePlayPause,
+    handleTrackSelect,
+  } = usePlayer()
+
+  return (
+    <div>
+      {/* Album Artwork */}
+      <img 
+        src={playlist.track_cover_uri} 
+        alt={`${playlist.name} album cover`}
+      />
+      
+      {/* Playback Button */}
+      <button onClick={togglePlayPause}>
+        {isPlaying ? <Pause /> : <Play />}
+      </button>
+      
+      {/* Current Track Info */}
+      <p>{currentTrack.name}</p>
+      <p>by {playlist.artists[0]}</p>
+      
+      {/* Track List */}
+      {tracks.map((track, index) => (
+        <div onClick={() => handleTrackSelect(index)}>
+          <span>{track.name}</span>
+          <span>{formatTime(track.time_ms)}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+```
+
+**Components:**
+- Large album artwork with click-to-pause overlay
+- Current playlist and rotation name
+- Next tracks from other playlists (side tracks)
+- Full track listing with durations
+- Remaining rotation time
+
+### Playback Controls
+
+<CardGroup cols={3}>
+  <Card title="Play/Pause" icon="play">
+    Toggle playback with spacebar or click
+  </Card>
+  <Card title="Skip Forward" icon="forward">
+    Jump to next track in playlist
+  </Card>
+  <Card title="Skip Backward" icon="backward">
+    Return to previous track
+  </Card>
+</CardGroup>
+
+### Timeline Slider
+
+```typescript
+// From site/src/components/TimeSlider.tsx
+export const TimeSlider = ({ expanded, onViewChange }) => {
+  const { totalDuration, handleSeek, currentTimeMs, isPlaying } = usePlayer()
+
+  return (
+    <Slider.Root
+      value={[currentTimeMs]}
+      max={totalDuration}
+      step={1000}
+      onValueChange={([value]) => handleSeek(value)}
+    >
+      <Slider.Track>
+        <Slider.Range />
+      </Slider.Track>
+      <Slider.Thumb />
+    </Slider.Root>
+  )
+}
+```
+
+Features:
+- Drag to seek to any position
+- Current time and total duration display
+- Smooth scrubbing without buffering issues
+- Persistent position (saved every 5 seconds)
+
+## Player Context
+
+The entire player state is managed through React Context:
+
+```typescript
+// From site/src/hooks/PlayerContext.tsx
+export interface PlayerContextValue {
+  // State
+  playlist?: FuckingPlaylist
+  tracks: FuckingTrack[]
+  currentTrackIndex: number
+  currentTimeMs: number
+  isPlaying: boolean
+  currentTrack: FuckingTrack | null
+  totalDuration: number
+
+  // Actions
+  setPlaylistAndTracks: (params: SetPlaylistAndTracksParams) => void
+  togglePlayPause: () => void
+  handleSeek: (value: number) => void
+  handleTrackSelect: (index: number) => Promise<void>
+  handleNextTrack: () => Promise<void>
+  handlePrevTrack: () => Promise<void>
+  
+  // Spotify integration
+  spotifyDeviceId: string | null
+  setSpotifyDeviceId: (id: string | null) => void
+}
+
+export function PlayerProvider({ children, initialPlaylist, initialTracks }) {
+  const [playlist, setPlaylist] = useState(initialPlaylist)
+  const [tracks, setTracks] = useState(initialTracks)
+  const [currentTrackIndex, setCurrentTrackIndex] = useState(0)
+  const [currentTimeMs, setCurrentTimeMs] = useState(0)
+  const [isPlaying, setIsPlaying] = useState(true)
+  
+  // Audio element management
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  
+  // Save player state every 5 seconds
+  useEffect(() => {
+    const interval = setInterval(savePlayerState, 5000)
+    return () => clearInterval(interval)
+  }, [currentTrackIndex])
+  
+  return (
+    <PlayerContext.Provider value={value}>
+      {children}
+    </PlayerContext.Provider>
+  )
+}
+```
+
+<Tip>
+  Use the `usePlayer()` hook anywhere in your component tree to access player state and controls
+</Tip>
+
+## Audio Playback
+
+### Source Handling
+
+The player handles multiple audio source types:
+
+```typescript
+// Load appropriate audio source
+if (playlist?.source === "spotify") {
+  // Use Spotify Web Playback SDK
+  await fetch("/api/spotify/play", {
+    method: "PUT",
+    body: JSON.stringify({
+      device_id: spotifyDeviceId,
+      context_uri: `spotify:playlist:${playlistSpotifyId}`,
+      offset: { uri: `spotify:track:${trackSpotifyId}` },
+    }),
+  })
+} else if (currentTrack.audio.type === "youtube") {
+  // Proxy YouTube audio
+  audioUrl = `/api/youtube/stream?id=${currentTrack.audio.id}`
+  audioRef.current.src = audioUrl
+} else {
+  // Direct stream (Bandcamp) with caching
+  audioUrl = await musicCache.getOrFetch(
+    currentTrack.id, 
+    currentTrack.audio.url
+  )
+  audioRef.current.src = audioUrl
+}
+```
+
+### Automatic Track Transitions
+
+```typescript
+useEffect(() => {
+  const audio = audioRef.current
+  if (!audio) return
+
+  const handleEnded = () => {
+    if (currentTrackIndex < tracks.length - 1) {
+      setCurrentTrackIndex(currentTrackIndex + 1)
+    } else {
+      setIsPlaying(false)  // Stop at end of playlist
+    }
+  }
+
+  audio.addEventListener("ended", handleEnded)
+  return () => audio.removeEventListener("ended", handleEnded)
+}, [currentTrackIndex, tracks.length])
+```
+
+## Views
+
+<Tabs>
+  <Tab title="Player View">
+    **Default view** showing current playback:
+    
+    - Large album artwork
+    - Current track metadata
+    - Full track listing
+    - Next tracks preview
+    - Playback controls
+    
+    Access: Navigate to `/`
+  </Tab>
+  
+  <Tab title="Rotation View">
+    **All playlists** in your rotation:
+    
+    ```typescript
+    function PlaylistsContent({ onPlaylistClick }) {
+      const [playlists, setPlaylists] = useState(() => db.getPlaylists())
+
+      return (
+        <div>
+          {playlists.map((playlist) => (
+            <div onClick={() => onPlaylistClick(playlist.id)}>
+              <img src={playlist.track_cover_uri} />
+              <span>{playlist.name}</span>
+              <span>{playlist.artists[0]}</span>
+              <span>{formatDuration(playlist.totalDurationMs)}</span>
+              
+              {/* Genre tags */}
+              {playlist.first_track.tags?.map((tag) => (
+                <span key={tag}>{tag}</span>
+              ))}
+            </div>
+          ))}
+        </div>
+      )
+    }
+    ```
+    
+    Access: Click **"View full rotation"**
+  </Tab>
+  
+  <Tab title="Add Music View">
+    **Import new music** from URLs:
+    
+    - Bandcamp albums
+    - Spotify playlists
+    - YouTube videos
+    
+    Access: Click **"Add Album"** button
+  </Tab>
+</Tabs>
+
+## Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `Space` | Play/Pause |
+| `→` | Next track |
+| `←` | Previous track |
+| `/` | Focus search (in rotation view) |
+
+<Note>
+  Keyboard shortcuts work when the player has focus
+</Note>
+
+## State Persistence
+
+Player state is automatically saved:
+
+```typescript
+const savePlayerState = useCallback(() => {
+  const trackId = tracks[currentTrackIndex]?.id
+  if (trackId) {
+    db.setPlayerState({ 
+      activeTrack: trackId, 
+      trackTimestamp: currentTimeMs 
+    })
+  }
+}, [tracks, currentTrackIndex, currentTimeMs])
+
+// Auto-save every 5 seconds
+useEffect(() => {
+  const interval = setInterval(savePlayerState, 5000)
+  savePlayerState()  // Immediate save
+  
+  return () => {
+    clearInterval(interval)
+    savePlayerState()  // Save on unmount
+  }
+}, [currentTrackIndex, savePlayerState])
+```
+
+**What's saved:**
+- ✅ Current playlist
+- ✅ Current track
+- ✅ Playback position (timestamp)
+- ✅ All imported playlists and tracks
+
+**On reload:**
+- Player resumes from last position
+- Last playlist automatically loaded
+- No re-download needed (offline cache)
+
+## Side Tracks
+
+The player shows "next tracks" from other playlists:
+
+```typescript
+// From site/src/components/PlayerView.tsx
+const nextTracks = useMemo(() => {
+  if (!currentTrack?.next_tracks || !playlist) return []
+  
+  return Object.entries(currentTrack.next_tracks)
+    .filter(([playlistId]) => playlistId !== playlist.id)  // Other playlists
+    .map(([playlistId, trackId]) => ({
+      playlist: db.getPlaylist(playlistId),
+      track: db.getTrack(trackId),
+    }))
+}, [currentTrack, playlist])
+
+return (
+  <>
+    <SideTrack track={nextTracks[0]?.track} position="left" />
+    {/* Main player */}
+    <SideTrack track={nextTracks[1]?.track} position="right" />
+  </>
+)
+```
+
+This creates **visual connections** between playlists, hinting at cross-playlist listening paths.
+
+## Player Layout
+
+```typescript
+// From site/src/components/PlayerLayout.tsx
+function PlayerLayout({ children }) {
+  return (
+    <div className="flex flex-col min-h-screen bg-[#0B0B0B] text-white">
+      {children}
+      
+      {/* Sticky bottom controls */}
+      <TimeSlider />
+      
+      {/* Floating action buttons */}
+      <div className="absolute bottom-4 left-4">
+        <Button>View full rotation</Button>
+        <AddBandcampButton />
+        <SpotifyStatus />
+      </div>
+    </div>
+  )
+}
+```
+
+**Design principles:**
+- Dark theme (`#0B0B0B` background)
+- Sticky bottom controls always visible
+- Floating action buttons in corner
+- Mobile-first responsive design
+
+## Performance
+
+<CardGroup cols={2}>
+  <Card title="Instant Startup" icon="bolt">
+    IndexedDB loads instantly, no API calls needed
+  </Card>
+  <Card title="Progressive Loading" icon="spinner">
+    Album art lazy-loaded as you scroll
+  </Card>
+  <Card title="Smart Caching" icon="database">
+    Tracks cached after first play
+  </Card>
+  <Card title="Minimal Re-renders" icon="arrows-rotate">
+    Optimized React context and memoization
+  </Card>
+</CardGroup>
+
+## Browser Compatibility
+
+| Feature | Chrome | Firefox | Safari | Edge |
+|---------|--------|---------|--------|------|
+| Basic Playback | ✅ | ✅ | ✅ | ✅ |
+| IndexedDB | ✅ | ✅ | ✅ | ✅ |
+| Media Session API | ✅ | ✅ | ✅ | ✅ |
+| Service Worker Cache | ✅ | ✅ | ✅ | ✅ |
+| Spotify Playback | ✅ | ✅ | ✅ | ✅ |
+
+<Warning>
+  Safari on iOS has restrictions on autoplay and background audio. Users must interact with the page first.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Playlists" href="/features/playlists">
+    Learn about playlist management
+  </Card>
+  <Card title="Offline Mode" href="/features/offline-mode">
+    Understand automatic caching
+  </Card>
+  <Card title="Graph Visualization" href="/features/graph-visualization">
+    Explore listening patterns
+  </Card>
+  <Card title="Adding Music" href="/sources/bandcamp">
+    Import from various sources
+  </Card>
+</CardGroup>

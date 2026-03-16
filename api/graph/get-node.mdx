@@ -1,0 +1,174 @@
+---
+title: Get Node
+description: Retrieve a single node by its UUID
+---
+
+## Endpoint
+
+```
+GET /graph/node/:id
+```
+
+Returns detailed information about a single node (song) in the listening graph.
+
+## Path Parameters
+
+<ParamField path="id" type="string" required>
+  The UUID of the node to retrieve (URL-encoded if necessary)
+</ParamField>
+
+## Query Parameters
+
+<ParamField query="user" type="string" required>
+  The Last.fm username whose graph to query
+</ParamField>
+
+## Response
+
+Returns a `CompactGraphNode` object (see [Get Graph](/api/graph/get-graph) for full schema).
+
+<ResponseField name="songKey" type="string">
+  Canonical song identifier in format `artist::track`
+</ResponseField>
+
+<ResponseField name="mbid" type="string">
+  MusicBrainz ID from Last.fm (if available)
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Track name
+</ResponseField>
+
+<ResponseField name="artists" type="string[]">
+  List of artist names
+</ResponseField>
+
+<ResponseField name="albumName" type="string">
+  Album name (if available)
+</ResponseField>
+
+<ResponseField name="lastfmUrl" type="string">
+  Last.fm URL for the track
+</ResponseField>
+
+<ResponseField name="imageUrl" type="string">
+  Album artwork URL
+</ResponseField>
+
+<ResponseField name="next" type="object">
+  Outgoing edges: UUID → edge weight
+</ResponseField>
+
+<ResponseField name="previous" type="object">
+  Incoming edges: UUID → edge weight
+</ResponseField>
+
+<ResponseField name="totalPlays" type="integer">
+  Total number of times this song was played
+</ResponseField>
+
+<ResponseField name="sources" type="string[]">
+  Data sources (currently only `["lastfm"]`)
+</ResponseField>
+
+<ResponseField name="sourcePlays" type="object">
+  Breakdown of plays per source
+</ResponseField>
+
+<ResponseField name="pageRank" type="number">
+  PageRank score (centrality measure)
+</ResponseField>
+
+<ResponseField name="clusterId" type="integer">
+  Community cluster ID
+</ResponseField>
+
+<ResponseField name="playDates" type="string[]">
+  ISO 8601 timestamps of all plays
+</ResponseField>
+
+<ResponseField name="positions" type="object">
+  Pre-computed layout positions for visualization
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+```bash Request
+curl "http://localhost:3000/graph/node/a1b2c3d4-e5f6-7890-abcd-ef1234567890?user=johndoe"
+```
+
+```bash URL-encoded ID
+curl "http://localhost:3000/graph/node/a1b2c3d4-e5f6-7890-abcd-ef1234567890?user=johndoe"
+```
+</CodeGroup>
+
+<CodeGroup>
+```json 200 Success
+{
+  "songKey": "radiohead::karma police",
+  "mbid": "12345678-1234-1234-1234-123456789abc",
+  "name": "Karma Police",
+  "artists": ["Radiohead"],
+  "albumName": "OK Computer",
+  "lastfmUrl": "https://www.last.fm/music/Radiohead/_/Karma+Police",
+  "imageUrl": "https://lastfm.freetls.fastly.net/i/u/300x300/abc123.jpg",
+  "next": {
+    "b2c3d4e5-f6a7-8901-bcde-f12345678901": 5,
+    "c3d4e5f6-a7b8-9012-cdef-123456789012": 3
+  },
+  "previous": {
+    "d4e5f6a7-b8c9-0123-def1-234567890123": 4
+  },
+  "totalPlays": 42,
+  "sources": ["lastfm"],
+  "sourcePlays": {
+    "lastfm": 42
+  },
+  "pageRank": 0.0023456,
+  "clusterId": 3,
+  "playDates": [
+    "2024-01-15T14:23:00Z",
+    "2024-01-20T09:45:00Z",
+    "2024-02-03T18:12:00Z"
+  ],
+  "positions": {
+    "pagerank": { "x": 0.234, "y": 0.567 },
+    "mds": { "x": -0.123, "y": 0.456 },
+    "weighted-mds": { "x": 0.345, "y": -0.234 }
+  }
+}
+```
+
+```json 400 Bad Request (Missing User)
+{
+  "error": "Missing required query parameter: user"
+}
+```
+
+```json 400 Bad Request (Invalid ID)
+{
+  "error": "Invalid node ID"
+}
+```
+
+```json 404 Not Found (User)
+{
+  "error": "User not found"
+}
+```
+
+```json 404 Not Found (Node)
+{
+  "error": "Node not found"
+}
+```
+</CodeGroup>
+
+## Notes
+
+<Note>
+- The `:id` parameter should be a valid UUID
+- Node IDs are stable for a given user's graph but may change if the graph is rebuilt
+- Use [Get Neighbors](/api/graph/get-neighbors) to get enriched neighbor information
+</Note>

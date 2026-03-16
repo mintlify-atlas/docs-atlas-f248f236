@@ -1,0 +1,358 @@
+---
+title: Listening Graph
+description: Understand how Rotations visualizes your listening patterns as a directed, weighted graph
+---
+
+## What is a Listening Graph?
+
+A **listening graph** is a directed, weighted network where:
+
+- **Nodes** represent individual songs
+- **Edges** represent sequential transitions (song A played before song B)
+- **Weights** indicate how often each transition occurred
+
+<Info>
+  Your listening history becomes a rich data structure revealing patterns, clusters, and connections that algorithmic recommendations miss.
+</Info>
+
+## Graph Structure
+
+### Nodes (Songs)
+
+Each song in the graph is identified by a **SongKey**:
+
+```typescript
+// From graph-server/src/graph/types.ts
+
+/**
+ * Canonical song identity: `lowercase(artist)::lowercase(track_name)`.
+ * Used to match the same song across data sources.
+ */
+export type SongKey = `${string}::${string}`
+
+export function toSongKey(artist: string, track: string): SongKey {
+  return `${artist.toLowerCase().trim()}::${track.toLowerCase().trim()}`
+}
+```
+
+This normalization allows the same song to be matched across:
+- Last.fm scrobbles
+- Spotify playlists
+- Bandcamp imports
+- YouTube streams
+
+### Graph Node Structure
+
+```typescript
+export interface GraphNode {
+  name: string
+  artists: string[]
+  albumName?: string
+  lastfmUrl?: string
+  mbid?: string  // MusicBrainz ID
+  
+  // Weighted edges
+  next: Record<SongKey, number>      // Outgoing: song → count
+  previous: Record<SongKey, number>  // Incoming: song → count
+  
+  totalPlays: number
+  sources: ListeningSource[]  // ["lastfm", ...]
+  sourcePlays?: Partial<Record<ListeningSource, number>>
+  
+  // Analysis results
+  pageRank?: number
+  clusterId?: number
+  imageUrl?: string
+  playDates: string[]  // ISO 8601 timestamps
+  positions?: LayoutPositions  // Pre-computed x/y coordinates
+}
+```
+
+### Edge Weights
+
+Edges are weighted by frequency:
+
+```typescript
+// Example: Song A followed by Song B three times
+nodeA.next["song-b::title"] = 3
+nodeB.previous["song-a::title"] = 3
+```
+
+This creates a **bidirectional weighted graph** capturing:
+- Forward listening patterns (what came next)
+- Backward listening patterns (what led here)
+- Strength of associations (how often)
+
+## Data Sources
+
+The graph aggregates data from multiple sources:
+
+<Tabs>
+  <Tab title="Last.fm">
+    **Full scrobble history** via `user.getRecentTracks` API:
+    
+    - Artist, track name, album, timestamp per scrobble
+    - Paginated (200 scrobbles per page)
+    - Chronologically ordered
+    - Can contain 100k+ scrobbles
+    
+    ```typescript
+    // From graph-server/src/ingestion/lastfm-fetcher.ts
+    interface RawScrobble {
+      artist: string
+      track: string
+      album: string
+      timestamp: number  // Unix timestamp
+      imageUrl?: string
+      mbid?: string
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Spotify">
+    **Recently played tracks** and **playlist orderings**:
+    
+    - Last 50 tracks from Recently Played API
+    - All user playlists with track sequences
+    - OAuth required with appropriate scopes
+    - Track order creates edges
+    
+    <Note>Spotify support is currently in development</Note>
+  </Tab>
+  
+  <Tab title="Local Library">
+    **Playlist play order** from your local rotations:
+    
+    - Tracks from Bandcamp/YouTube imports
+    - Sequential play creates edges
+    - `next_tracks` field links songs
+    - Integrated with player state
+  </Tab>
+</Tabs>
+
+## Graph Construction
+
+The graph is built in phases:
+
+<Steps>
+  <Step title="Data Ingestion">
+    Fetch raw data from all sources:
+    
+    ```bash
+    # Fetch Last.fm scrobbles
+    curl -X POST http://localhost:3001/pipeline/fetch/lastfm \
+      -d '{"username":"your_username"}'
+    ```
+  </Step>
+  
+  <Step title="Normalization">
+    Convert all tracks to canonical SongKeys:
+    
+    ```typescript
+    const songKey = toSongKey("The Beatles", "Hey Jude")
+    // Result: "the beatles::hey jude"
+    ```
+    
+    This deduplicates the same song across sources.
+  </Step>
+  
+  <Step title="Edge Creation">
+    Process chronologically ordered scrobbles:
+    
+    ```typescript
+    for (let i = 0; i < scrobbles.length - 1; i++) {
+      const current = toSongKey(scrobbles[i].artist, scrobbles[i].track)
+      const next = toSongKey(scrobbles[i + 1].artist, scrobbles[i + 1].track)
+      
+      // Create weighted edge
+      graph.nodes[current].next[next] = 
+        (graph.nodes[current].next[next] || 0) + 1
+      graph.nodes[next].previous[current] = 
+        (graph.nodes[next].previous[current] || 0) + 1
+    }
+    ```
+  </Step>
+  
+  <Step title="Analysis">
+    Compute PageRank, clusters, and statistics (see below)
+  </Step>
+  
+  <Step title="Storage">
+    Persist to PostgreSQL with per-user isolation:
+    
+    - `users` table
+    - `nodes` table (UUID-keyed)
+    - `edges` table (weighted)
+    - `metadata` table
+    - `pipeline_jobs` table
+  </Step>
+</Steps>
+
+## PageRank Analysis
+
+PageRank identifies the most "influential" songs in your listening graph:
+
+```typescript
+// From graph-server/src/analysis/pagerank.ts
+
+export function computePageRank(
+  graph: ListeningGraph,
+  options: PageRankOptions = {}
+): PageRankResult {
+  const {
+    dampingFactor: d = 0.85,
+    convergenceThreshold = 0.0001,
+    maxIterations = 100,
+  } = options
+
+  // Initialize all nodes with rank 1/N
+  const keys = Object.keys(graph.nodes) as SongKey[]
+  const n = keys.length
+  const ranks = new Map<SongKey, number>()
+  
+  for (const key of keys) {
+    ranks.set(key, 1 / n)
+  }
+
+  // Iterative algorithm
+  while (iterations < maxIterations && !converged) {
+    // Distribute rank along weighted edges
+    for (const fromKey of keys) {
+      const node = graph.nodes[fromKey]
+      const outSum = Object.values(node.next).reduce((a, b) => a + b, 0)
+      
+      for (const [toKey, weight] of Object.entries(node.next)) {
+        const contribution = (ranks.get(fromKey) * weight) / outSum
+        newRanks.set(toKey, newRanks.get(toKey) + d * contribution)
+      }
+    }
+    
+    // Check convergence...
+  }
+  
+  // Write ranks back to graph
+  for (const key of keys) {
+    graph.nodes[key].pageRank = ranks.get(key)
+  }
+}
+```
+
+**What PageRank reveals:**
+- Songs you frequently transition TO from many different songs
+- "Hub" songs that bridge different parts of your library
+- Core songs in your rotation vs. peripheral ones
+
+<Tip>
+  High PageRank songs aren't necessarily your most-played - they're your most *connected* songs
+</Tip>
+
+## Cluster Detection
+
+Clusters reveal natural groupings in your listening:
+
+- **Genre clusters** - Similar music styles
+- **Mood clusters** - Songs listened to in similar contexts
+- **Artist clusters** - Catalog exploration patterns
+- **Temporal clusters** - Songs from the same listening period
+
+```typescript
+// Clusters are computed server-side and stored per node
+interface GraphNode {
+  clusterId?: number  // 0, 1, 2, ...
+  // ...
+}
+```
+
+## Graph Metadata
+
+```typescript
+export interface GraphMetadata {
+  totalScrobbles: number
+  dateRange: { from: string; to: string }  // ISO 8601
+  exportTimestamp: string
+  lastfmUsername?: string
+}
+```
+
+Access via API:
+
+```bash
+curl http://localhost:3001/graph/stats?user=your_username
+```
+
+## Visualization
+
+The graph frontend renders your listening graph using Sigma.js:
+
+```typescript
+// From site/src/components/GraphView.tsx
+import { SigmaContainer, useLoadGraph } from "@react-sigma/core"
+
+function GraphInner() {
+  const { graph, state, error } = useGraphData()
+  const loadGraph = useLoadGraph()
+  
+  useEffect(() => {
+    if (!graph) return
+    loadGraph(graph)  // Load into Sigma
+    
+    // Auto-focus a random node on startup
+    const nodes = graph.nodes()
+    const randomKey = nodes[Math.floor(Math.random() * nodes.length)]
+    onSelectNode({ key: randomKey, attrs: graph.getNodeAttributes(randomKey) })
+  }, [graph])
+  
+  return <GraphEvents onSelectNode={onSelectNode} />
+}
+```
+
+### Visualization Features
+
+<CardGroup cols={2}>
+  <Card title="Interactive Navigation" icon="hand-pointer">
+    Click nodes to select, drag to pan, scroll to zoom
+  </Card>
+  <Card title="Search" icon="magnifying-glass">
+    Find songs by name or artist
+  </Card>
+  <Card title="Node Details" icon="info">
+    View plays, PageRank, neighbors, and metadata
+  </Card>
+  <Card title="Path Finding" icon="route">
+    Find shortest/strongest paths between songs
+  </Card>
+</CardGroup>
+
+## API Access
+
+All graph endpoints require `?user=<username>` parameter:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /graph` | Full graph (paginated with `?limit=&offset=`) |
+| `GET /graph/node/:id` | Single node by UUID |
+| `GET /graph/neighbors/:id` | Node plus immediate neighbors |
+| `GET /graph/stats` | Summary counts + metadata |
+| `GET /graph/analysis` | PageRank top N (optional `?topN=`) |
+| `GET /graph/path` | Path query (`?from=&to=&algorithm=`) |
+
+<Warning>
+  Graph endpoints return `400` if `?user=` is missing and `404` if the user is unknown
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Graph Visualization" href="/features/graph-visualization">
+    Learn to navigate and interpret the graph UI
+  </Card>
+  <Card title="Last.fm Integration" href="/sources/lastfm">
+    Import your complete listening history
+  </Card>
+  <Card title="Music Sources" href="/concepts/music-sources">
+    Understand how sources feed the graph
+  </Card>
+  <Card title="Rotations" href="/concepts/rotations">
+    See how rotations connect to the graph
+  </Card>
+</CardGroup>

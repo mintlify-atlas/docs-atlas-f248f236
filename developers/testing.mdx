@@ -1,0 +1,478 @@
+---
+title: "Testing Guide"
+description: "Run and write tests for Rotations components"
+---
+
+## Testing Stack
+
+Rotations uses **Vitest** for unit and integration testing across all packages.
+
+<CardGroup cols={2}>
+  <Card title="Vitest" icon="vial">
+    Fast unit test runner with Jest API compatibility
+  </Card>
+  <Card title="Testing Library" icon="flask">
+    React component testing utilities
+  </Card>
+  <Card title="jsdom" icon="window">
+    DOM simulation for Node.js environment
+  </Card>
+  <Card title="TypeScript" icon="code">
+    Type-safe test code
+  </Card>
+</CardGroup>
+
+## Running Tests
+
+### All Packages
+
+```bash
+# Run all tests once
+pnpm -r test
+
+# Watch mode (re-run on changes)
+pnpm -r test -- --watch
+
+# With coverage
+pnpm -r test -- --coverage
+```
+
+### Individual Packages
+
+<Tabs>
+  <Tab title="Music Player">
+    ```bash
+    cd site
+    pnpm test
+    ```
+  </Tab>
+  
+  <Tab title="Graph Server">
+    ```bash
+    cd graph-server
+    pnpm test
+    ```
+  </Tab>
+  
+  <Tab title="Graph Frontend">
+    ```bash
+    cd graph-frontend
+    pnpm test
+    ```
+  </Tab>
+</Tabs>
+
+## Writing Tests
+
+### Unit Tests
+
+#### Testing Pure Functions
+
+```typescript title="graph-server/src/graph/types.test.ts" lines
+import { describe, it, expect } from 'vitest';
+import { toSongKey } from './types';
+
+describe('toSongKey', () => {
+  it('creates lowercase canonical key', () => {
+    const key = toSongKey('Radiohead', 'Paranoid Android');
+    expect(key).toBe('radiohead::paranoid android');
+  });
+  
+  it('trims whitespace', () => {
+    const key = toSongKey('  Artist  ', '  Track  ');
+    expect(key).toBe('artist::track');
+  });
+  
+  it('handles special characters', () => {
+    const key = toSongKey('Artist/Band', 'Track (Version)');
+    expect(key).toBe('artist/band::track (version)');
+  });
+});
+```
+
+#### Testing Algorithms
+
+```typescript title="graph-server/src/analysis/pagerank.test.ts" lines
+import { describe, it, expect } from 'vitest';
+import { computePageRank } from './pagerank';
+import type { ListeningGraph } from '../graph/types';
+
+describe('computePageRank', () => {
+  it('computes PageRank for simple graph', () => {
+    const graph: ListeningGraph = {
+      nodes: {
+        'a::a': {
+          name: 'A',
+          artists: ['A'],
+          next: { 'b::b': 1 },
+          previous: {},
+          totalPlays: 1,
+          sources: ['lastfm'],
+          playDates: [],
+        },
+        'b::b': {
+          name: 'B',
+          artists: ['B'],
+          next: { 'a::a': 1 },
+          previous: { 'a::a': 1 },
+          totalPlays: 1,
+          sources: ['lastfm'],
+          playDates: [],
+        },
+      },
+      metadata: {
+        totalScrobbles: 2,
+        dateRange: { from: '2024-01-01', to: '2024-01-02' },
+        exportTimestamp: '2024-01-02T00:00:00Z',
+      },
+    };
+    
+    const { scores, converged } = computePageRank(graph);
+    
+    expect(converged).toBe(true);
+    expect(scores['a::a']).toBeCloseTo(0.5, 1);
+    expect(scores['b::b']).toBeCloseTo(0.5, 1);
+  });
+  
+  it('ranks hub nodes higher', () => {
+    // Node A points to B, C, D
+    // B, C, D point back to A
+    const graph: ListeningGraph = { /* ... */ };
+    
+    const { scores } = computePageRank(graph);
+    
+    expect(scores['a::a']).toBeGreaterThan(scores['b::b']);
+  });
+});
+```
+
+### Component Tests
+
+#### Testing React Components
+
+```typescript title="site/src/components/PlayerView.test.tsx" lines
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import PlayerView from './PlayerView';
+import { store } from '../lib/tinybase-store';
+
+describe('PlayerView', () => {
+  it('renders track info', () => {
+    // Setup store with track data
+    store.setRow('tracks', 'track-1', {
+      id: 'track-1',
+      title: 'Test Track',
+      artist: 'Test Artist',
+      album: 'Test Album',
+      source: 'bandcamp',
+      url: 'https://example.com/track.mp3',
+      cached: false,
+    });
+    
+    render(<PlayerView />);
+    
+    expect(screen.getByText('Test Track')).toBeInTheDocument();
+    expect(screen.getByText('Test Artist')).toBeInTheDocument();
+  });
+  
+  it('plays track when play button clicked', async () => {
+    const mockPlay = vi.fn();
+    HTMLMediaElement.prototype.play = mockPlay;
+    
+    render(<PlayerView />);
+    
+    const playButton = screen.getByRole('button', { name: /play/i });
+    fireEvent.click(playButton);
+    
+    expect(mockPlay).toHaveBeenCalled();
+  });
+  
+  it('advances to next track', () => {
+    // Setup playlist with multiple tracks
+    store.setRow('playlists', 'playlist-1', {
+      id: 'playlist-1',
+      name: 'Test Playlist',
+      createdAt: Date.now(),
+    });
+    
+    store.setRow('playlistTracks', 'playlist-1-track-1', {
+      playlistId: 'playlist-1',
+      trackId: 'track-1',
+      position: 0,
+    });
+    
+    store.setRow('playlistTracks', 'playlist-1-track-2', {
+      playlistId: 'playlist-1',
+      trackId: 'track-2',
+      position: 1,
+    });
+    
+    render(<PlayerView />);
+    
+    const nextButton = screen.getByRole('button', { name: /next/i });
+    fireEvent.click(nextButton);
+    
+    // Verify current track changed
+    expect(screen.getByText('Track 2 Title')).toBeInTheDocument();
+  });
+});
+```
+
+### API Tests
+
+#### Testing Hono Routes
+
+```typescript title="graph-server/src/server/app.test.ts" lines
+import { describe, it, expect, beforeEach } from 'vitest';
+import { createApp } from './app';
+import { GraphDatabase } from '../graph/database';
+
+describe('Graph API', () => {
+  let app: ReturnType<typeof createApp>;
+  let mockDb: GraphDatabase;
+  
+  beforeEach(() => {
+    mockDb = new GraphDatabase('mock://db');
+    app = createApp({ db: mockDb, enablePipelineWorker: false });
+  });
+  
+  it('returns 400 when user param missing', async () => {
+    const res = await app.request('/graph');
+    
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toContain('user');
+  });
+  
+  it('returns 404 for unknown user', async () => {
+    vi.spyOn(mockDb, 'getUserId').mockResolvedValue(null);
+    
+    const res = await app.request('/graph?user=unknown');
+    
+    expect(res.status).toBe(404);
+  });
+  
+  it('returns graph for valid user', async () => {
+    vi.spyOn(mockDb, 'getUserId').mockResolvedValue(1);
+    vi.spyOn(mockDb, 'loadGraphCompact').mockResolvedValue({
+      nodes: { 'a::a': { /* ... */ } },
+      metadata: { /* ... */ },
+    });
+    
+    const res = await app.request('/graph?user=testuser');
+    
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.nodes).toBeDefined();
+  });
+});
+```
+
+### Integration Tests
+
+#### Testing Graph Pipeline
+
+```typescript title="graph-server/src/integration/pipeline.test.ts" lines
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { GraphDatabase } from '../graph/database';
+import { buildGraph } from '../graph/build-graph';
+import { enrichGraph } from '../analysis/enrich';
+import type { RawScrobble } from '../graph/build-graph';
+
+describe('Graph Pipeline Integration', () => {
+  let db: GraphDatabase;
+  
+  beforeAll(async () => {
+    db = new GraphDatabase(process.env.TEST_DATABASE_URL!);
+    await db.init();
+  });
+  
+  afterAll(async () => {
+    await db.close();
+  });
+  
+  it('builds and enriches graph from scrobbles', async () => {
+    const scrobbles: RawScrobble[] = [
+      {
+        artist: { '#text': 'Artist A' },
+        name: 'Track 1',
+        album: { '#text': 'Album 1' },
+        date: { uts: '1640000000' },
+      },
+      {
+        artist: { '#text': 'Artist B' },
+        name: 'Track 2',
+        album: { '#text': 'Album 2' },
+        date: { uts: '1640000060' },
+      },
+      {
+        artist: { '#text': 'Artist A' },
+        name: 'Track 1',
+        album: { '#text': 'Album 1' },
+        date: { uts: '1640000120' },
+      },
+    ];
+    
+    // Build graph
+    const graph = buildGraph({
+      lastfmScrobbles: scrobbles,
+      lastfmUsername: 'testuser',
+    });
+    
+    expect(Object.keys(graph.nodes)).toHaveLength(2);
+    expect(graph.nodes['artist a::track 1'].totalPlays).toBe(2);
+    expect(graph.nodes['artist a::track 1'].next['artist b::track 2']).toBe(1);
+    
+    // Enrich
+    const { summary } = enrichGraph(graph);
+    
+    expect(summary.pageRank.converged).toBe(true);
+    expect(summary.clusters.clusterCount).toBeGreaterThan(0);
+    
+    // Save to database
+    const userId = await db.getOrCreateUser('testuser');
+    await db.clearGraph(userId);
+    await db.saveGraph(graph, userId);
+    
+    // Verify persistence
+    const loaded = await db.loadGraph(userId);
+    expect(Object.keys(loaded.nodes)).toHaveLength(2);
+  });
+});
+```
+
+## Mocking
+
+### Mocking External APIs
+
+```typescript title="site/src/pages/api/bandcamp/scrape.test.ts" lines
+import { describe, it, expect, vi } from 'vitest';
+import { GET } from './scrape';
+
+describe('Bandcamp Scraper', () => {
+  it('extracts track data from HTML', async () => {
+    const mockHtml = `
+      <script type="application/ld+json">
+      {
+        "track": {
+          "itemListElement": [
+            { "item": { "name": "Track 1", "url": "https://..." } }
+          ]
+        }
+      }
+      </script>
+    `;
+    
+    global.fetch = vi.fn().mockResolvedValue({
+      text: () => Promise.resolve(mockHtml),
+    });
+    
+    const response = await GET({
+      url: new URLSearchParams({ url: 'https://bandcamp.com/album' }),
+    });
+    
+    const data = await response.json();
+    expect(data.tracks).toHaveLength(1);
+    expect(data.tracks[0].name).toBe('Track 1');
+  });
+});
+```
+
+### Mocking Database
+
+```typescript
+import { vi } from 'vitest';
+
+const mockDb = {
+  getUserId: vi.fn(),
+  getNodeById: vi.fn(),
+  loadGraph: vi.fn(),
+  saveGraph: vi.fn(),
+};
+```
+
+## Test Coverage
+
+### Viewing Coverage Reports
+
+```bash
+# Generate coverage
+pnpm -r test -- --coverage
+
+# Open HTML report
+open graph-server/coverage/index.html
+```
+
+### Coverage Goals
+
+<CardGroup cols={2}>
+  <Card title="Core Logic" icon="bullseye">
+    Aim for 80%+ coverage on graph algorithms and data pipeline
+  </Card>
+  <Card title="API Routes" icon="route">
+    Test all error cases and edge cases
+  </Card>
+  <Card title="Components" icon="react">
+    Cover user interactions and state changes
+  </Card>
+  <Card title="Utilities" icon="wrench">
+    100% coverage for pure utility functions
+  </Card>
+</CardGroup>
+
+## Continuous Integration
+
+### GitHub Actions Workflow
+
+```yaml title=".github/workflows/test.yml" lines
+name: Test
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: graph_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      
+      - run: pnpm install
+      - run: pnpm -r test -- --coverage
+      - run: pnpm -r lint
+      - run: pnpm -r exec tsc --noEmit
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Deployment" icon="rocket" href="/developers/deployment">
+    Deploy to production
+  </Card>
+  <Card title="Local Development" icon="code" href="/developers/local-development">
+    Development workflows
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/developers/architecture">
+    System design overview
+  </Card>
+  <Card title="Contributing" icon="git" href="https://github.com/cdxker/rotations">
+    Contribution guidelines
+  </Card>
+</CardGroup>

@@ -1,0 +1,96 @@
+---
+title: Introduction to Rotations
+description: A music player built from first principles with hand-curated rotations and listening graph visualization
+---
+
+## What is Rotations?
+
+Rotations is a modern music player SaaS application that reimagines how you experience music. Built from first principles, it combines curated playlists (called "rotations") with powerful listening graph visualization to give you deeper insights into your music habits.
+
+<CardGroup cols={2}>
+  <Card title="Import Once, Forever Persisted" icon="upload">
+    Add your music from Bandcamp, Spotify, YouTube, or Last.fm and it's stored permanently
+  </Card>
+  <Card title="Automatic Offline Mode" icon="wifi">
+    All playlists and music are downloaded after first stream for offline listening
+  </Card>
+  <Card title="Listening Graph" icon="chart-network">
+    Visualize your listening patterns as an interactive graph with PageRank analysis
+  </Card>
+  <Card title="Multi-Rotation Mode" icon="layer-group">
+    Manage multiple curated rotations and seamlessly switch between them
+  </Card>
+</CardGroup>
+
+## Core Philosophy
+
+Rotations is built around a simple question: **What if you could have better control over your daily music rotation?**
+
+Instead of algorithmic recommendations, Rotations gives you:
+
+- **Hand-curated control** over what enters your rotation
+- **Visual insights** into your listening patterns through graph visualization
+- **Multi-source support** to aggregate music from your favorite platforms
+- **Offline-first architecture** so your music is always available
+
+## Key Features
+
+### Current Rotation System
+
+Listening to a song automatically adds it to your Current Rotation. You control your rotation's radius and get recommended songs outside your current bubble.
+
+### Listening Graph Visualization
+
+Every song you listen to becomes a node in a directed, weighted graph. Transitions between songs create edges, revealing patterns in your listening habits through:
+
+- **PageRank analysis** - Discover your most influential songs
+- **Cluster detection** - See natural groupings in your music taste
+- **Path finding** - Explore how songs connect in your listening history
+
+### Supported Sources
+
+<Steps>
+  <Step title="Bandcamp">
+    Fully supported - Import albums and tracks directly
+  </Step>
+  <Step title="Last.fm">
+    Import your complete listening history for graph analysis
+  </Step>
+  <Step title="YouTube">
+    In progress - Stream YouTube content
+  </Step>
+  <Step title="Spotify">
+    In progress - Sync playlists and listening data
+  </Step>
+</Steps>
+
+## Architecture Overview
+
+Rotations consists of three main components:
+
+1. **Site** (`site/`) - Astro-based music player frontend
+2. **Graph Frontend** (`graph-frontend/`) - React-based listening graph visualization
+3. **Graph Server** (`graph-server/`) - Node.js backend for graph analysis and data processing
+
+<Info>
+  The application uses TinyBase for local-first data storage with automatic localStorage persistence, ensuring your music library is always available.
+</Info>
+
+## Getting Started
+
+Ready to dive in? Check out our [Quickstart Guide](/quickstart) to set up Rotations and start building your first rotation.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get Rotations running in 5 minutes
+  </Card>
+  <Card title="Core Concepts" icon="lightbulb" href="/concepts/rotations">
+    Understand rotations and listening graphs
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Detailed installation and setup guide
+  </Card>
+  <Card title="Music Player" icon="play" href="/features/music-player">
+    Learn about player features
+  </Card>
+</CardGroup>

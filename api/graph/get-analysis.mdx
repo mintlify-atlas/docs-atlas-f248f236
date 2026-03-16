@@ -1,0 +1,311 @@
+---
+title: Get Analysis
+description: Retrieve comprehensive graph analysis including rankings, clusters, and PageRank
+---
+
+## Endpoint
+
+```
+GET /graph/analysis
+```
+
+Returns a comprehensive analysis of the user's listening graph, including summary statistics, song rankings by various metrics, PageRank results, and community cluster detection.
+
+## Query Parameters
+
+<ParamField query="user" type="string" required>
+  The Last.fm username whose graph to analyze
+</ParamField>
+
+<ParamField query="topN" type="integer" default="20">
+  Number of top songs to return in each ranking category
+</ParamField>
+
+## Response
+
+Returns an `AnalysisSummary` object with comprehensive graph analytics.
+
+<ResponseField name="pageRank" type="object">
+  PageRank algorithm results and top songs by centrality
+  
+  <Expandable title="PageRank properties">
+    <ResponseField name="iterations" type="integer">
+      Number of iterations until convergence (or max)
+    </ResponseField>
+    
+    <ResponseField name="converged" type="boolean">
+      Whether the algorithm converged before hitting maxIterations
+    </ResponseField>
+    
+    <ResponseField name="maxDelta" type="number">
+      Maximum rank change in the final iteration
+    </ResponseField>
+    
+    <ResponseField name="topSongs" type="array">
+      Top N songs by PageRank score
+      <Expandable title="TopSong properties">
+        <ResponseField name="songKey" type="string">
+          Canonical song identifier
+        </ResponseField>
+        <ResponseField name="name" type="string">
+          Track name
+        </ResponseField>
+        <ResponseField name="artists" type="string[]">
+          Artist names
+        </ResponseField>
+        <ResponseField name="pageRank" type="number">
+          PageRank score
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="stats" type="object">
+  Graph-level summary statistics
+  
+  <Expandable title="GraphStats properties">
+    <ResponseField name="totalNodes" type="integer">
+      Total number of unique songs
+    </ResponseField>
+    
+    <ResponseField name="totalEdges" type="integer">
+      Total number of directed edges
+    </ResponseField>
+    
+    <ResponseField name="totalScrobbles" type="integer">
+      Total scrobbles across all sources
+    </ResponseField>
+    
+    <ResponseField name="dateRange" type="object">
+      Time range of scrobble data
+    </ResponseField>
+    
+    <ResponseField name="sourceBreakdown" type="object">
+      Scrobble count per source: `{ "lastfm": number }`
+    </ResponseField>
+    
+    <ResponseField name="averageDegree" type="number">
+      Average number of connections per node
+    </ResponseField>
+    
+    <ResponseField name="medianDegree" type="number">
+      Median number of connections per node
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="rankings" type="object">
+  Top songs by various metrics
+  
+  <Expandable title="Rankings properties">
+    <ResponseField name="mostPlayed" type="array">
+      Songs with the highest play counts
+    </ResponseField>
+    
+    <ResponseField name="mostConnected" type="array">
+      Songs with the most total connections (in + out degree)
+    </ResponseField>
+    
+    <ResponseField name="highestInDegree" type="array">
+      Songs most frequently followed by other songs
+    </ResponseField>
+    
+    <ResponseField name="highestOutDegree" type="array">
+      Songs that most frequently lead to other songs
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="clusters" type="object">
+  Community detection results using the Louvain algorithm
+  
+  <Expandable title="ClusterResult properties">
+    <ResponseField name="clusterCount" type="integer">
+      Total number of detected communities
+    </ResponseField>
+    
+    <ResponseField name="modularity" type="number">
+      Modularity score (0-1, higher = stronger community structure)
+    </ResponseField>
+    
+    <ResponseField name="clusters" type="array">
+      Detailed information about each cluster
+      <Expandable title="ClusterStats properties">
+        <ResponseField name="clusterId" type="integer">
+          Unique cluster identifier
+        </ResponseField>
+        
+        <ResponseField name="size" type="integer">
+          Number of songs in this cluster
+        </ResponseField>
+        
+        <ResponseField name="topSongs" type="array">
+          Top songs in this cluster by play count
+          <Expandable title="Song properties">
+            <ResponseField name="songKey" type="string">
+              Song identifier
+            </ResponseField>
+            <ResponseField name="name" type="string">
+              Track name
+            </ResponseField>
+            <ResponseField name="artists" type="string[]">
+              Artist names
+            </ResponseField>
+            <ResponseField name="totalPlays" type="integer">
+              Play count
+            </ResponseField>
+          </Expandable>
+        </ResponseField>
+        
+        <ResponseField name="interClusterEdges" type="integer">
+          Number of edges connecting to other clusters
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+```bash Default (top 20)
+curl "http://localhost:3000/graph/analysis?user=johndoe"
+```
+
+```bash Custom top N
+curl "http://localhost:3000/graph/analysis?user=johndoe&topN=50"
+```
+</CodeGroup>
+
+<CodeGroup>
+```json 200 Success
+{
+  "pageRank": {
+    "iterations": 23,
+    "converged": true,
+    "maxDelta": 0.000087,
+    "topSongs": [
+      {
+        "songKey": "radiohead::karma police",
+        "name": "Karma Police",
+        "artists": ["Radiohead"],
+        "pageRank": 0.0045678
+      },
+      {
+        "songKey": "the beatles::come together",
+        "name": "Come Together",
+        "artists": ["The Beatles"],
+        "pageRank": 0.0041234
+      }
+    ]
+  },
+  "stats": {
+    "totalNodes": 1523,
+    "totalEdges": 8742,
+    "totalScrobbles": 15234,
+    "dateRange": {
+      "from": "2020-01-01T00:00:00Z",
+      "to": "2024-03-15T23:59:59Z"
+    },
+    "sourceBreakdown": {
+      "lastfm": 15234
+    },
+    "averageDegree": 5.74,
+    "medianDegree": 4
+  },
+  "rankings": {
+    "mostPlayed": [
+      {
+        "songKey": "radiohead::karma police",
+        "name": "Karma Police",
+        "artists": ["Radiohead"],
+        "totalPlays": 42,
+        "inDegree": 8,
+        "outDegree": 12,
+        "weightedInDegree": 34,
+        "weightedOutDegree": 45,
+        "totalDegree": 20
+      }
+    ],
+    "mostConnected": [ /* ... */ ],
+    "highestInDegree": [ /* ... */ ],
+    "highestOutDegree": [ /* ... */ ]
+  },
+  "clusters": {
+    "clusterCount": 12,
+    "modularity": 0.67,
+    "clusters": [
+      {
+        "clusterId": 0,
+        "size": 234,
+        "topSongs": [
+          {
+            "songKey": "radiohead::karma police",
+            "name": "Karma Police",
+            "artists": ["Radiohead"],
+            "totalPlays": 42
+          }
+        ],
+        "interClusterEdges": 87
+      }
+    ]
+  }
+}
+```
+
+```json 400 Bad Request
+{
+  "error": "Missing required query parameter: user"
+}
+```
+
+```json 404 Not Found
+{
+  "error": "User not found"
+}
+```
+</CodeGroup>
+
+## Understanding the Analysis
+
+### PageRank
+
+PageRank identifies "central" songs in your listening graph - songs that are frequently connected to other well-connected songs. High PageRank songs are often:
+- Album openers or closers
+- Songs in frequently-played playlists
+- Transition songs between different moods/genres
+
+### Rankings
+
+- **Most Played**: Your most-listened songs (total play count)
+- **Most Connected**: Songs with the most neighbors (hub songs)
+- **Highest In-Degree**: Songs frequently followed by other songs (good playlist endings)
+- **Highest Out-Degree**: Songs that frequently lead to others (good playlist starters)
+
+### Clusters
+
+The Louvain algorithm detects communities of songs that are frequently listened to together. Clusters often represent:
+- Genres or subgenres
+- Specific artists or albums you binge
+- Moods or contexts (workout music, study music, etc.)
+- Time periods in your listening history
+
+## Performance Considerations
+
+<Warning>
+This endpoint performs expensive graph analysis algorithms:
+- PageRank: O(E × iterations) where E is the number of edges
+- Clustering: O(N × log N) where N is the number of nodes
+
+For large graphs (>5000 nodes), response times may exceed 5 seconds. Consider caching results.
+</Warning>
+
+## Notes
+
+<Note>
+- Analysis is computed on-demand and not cached
+- The `topN` parameter affects both rankings and cluster top songs
+- Modularity scores above 0.3 indicate good community structure
+- PageRank convergence typically occurs within 20-30 iterations
+</Note>

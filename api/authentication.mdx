@@ -1,0 +1,86 @@
+---
+title: Authentication
+description: Authentication and authorization for the Rotations Graph API
+---
+
+The Rotations Graph API currently implements user-based data isolation without traditional API authentication tokens.
+
+## User Query Parameter
+
+Most Graph API endpoints require a `user` query parameter that identifies which user's data to access:
+
+```bash
+curl "http://localhost:3000/graph?user=username"
+```
+
+<ParamField query="user" type="string" required>
+  The Last.fm username associated with the graph data
+</ParamField>
+
+## Last.fm API Key
+
+Pipeline endpoints that fetch data from Last.fm require a valid Last.fm API key configured via environment variables:
+
+```bash
+LASTFM_API_KEY=your_api_key_here
+```
+
+### Getting a Last.fm API Key
+
+1. Create a Last.fm account at [last.fm](https://www.last.fm)
+2. Visit the [API account page](https://www.last.fm/api/account/create)
+3. Fill out the application form
+4. Copy your API key and add it to your `.env` file
+
+## User Verification
+
+When using Pipeline endpoints, the API verifies that the Last.fm username exists and is accessible:
+
+<CodeGroup>
+```json Success Response
+{
+  "status": "complete",
+  "scrobbleCount": 15234,
+  "logs": [
+    "Fetching scrobbles for user: username",
+    "Fetched 15234 scrobbles"
+  ]
+}
+```
+
+```json Error Response
+{
+  "error": "Last.fm fetch failed: User not found"
+}
+```
+</CodeGroup>
+
+## Data Isolation
+
+Each user's graph data is stored separately in the database and accessed via their username:
+
+- Users are identified by their Last.fm username
+- Each user has a unique internal `user_id` in the database
+- All nodes, edges, and metadata are scoped to the `user_id`
+- Cross-user data access is not possible
+
+## Future Authentication
+
+<Note>
+The current implementation does not include API tokens or OAuth. Future versions may add:
+- API key authentication
+- OAuth integration with Last.fm
+- Rate limiting per user/API key
+- Session management
+</Note>
+
+## Security Considerations
+
+<Warning>
+In production deployments:
+- Implement proper authentication middleware
+- Use HTTPS for all API requests
+- Store Last.fm API keys securely (environment variables, secrets manager)
+- Never commit API keys to version control
+- Consider adding rate limiting to prevent abuse
+</Warning>

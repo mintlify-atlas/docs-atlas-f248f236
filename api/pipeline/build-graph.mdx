@@ -1,0 +1,221 @@
+---
+title: Build Graph
+description: Build a listening graph from fetched scrobble data
+---
+
+## Endpoint
+
+```
+POST /pipeline/build
+```
+
+Builds a listening graph from previously fetched Last.fm scrobbles, performs analysis (PageRank, clustering, layout), and stores the result in the database.
+
+## Request Body
+
+<ParamField body="username" type="string" required>
+  The Last.fm username whose scrobbles to process into a graph
+</ParamField>
+
+## Response
+
+<ResponseField name="status" type="string">
+  Status of the build operation: `"complete"`
+</ResponseField>
+
+<ResponseField name="nodes" type="integer">
+  Number of unique songs (nodes) in the built graph
+</ResponseField>
+
+<ResponseField name="edges" type="integer">
+  Number of directed transitions (edges) in the built graph
+</ResponseField>
+
+<ResponseField name="clusters" type="integer">
+  Number of community clusters detected by the Louvain algorithm
+</ResponseField>
+
+<ResponseField name="pageRankConverged" type="boolean">
+  Whether the PageRank algorithm converged before hitting max iterations
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+```bash cURL
+curl -X POST http://localhost:3000/pipeline/build \
+  -H "Content-Type: application/json" \
+  -d '{"username": "johndoe"}'
+```
+
+```javascript JavaScript
+const response = await fetch('http://localhost:3000/pipeline/build', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ username: 'johndoe' })
+});
+
+const data = await response.json();
+console.log(`Built graph: ${data.nodes} nodes, ${data.edges} edges`);
+```
+
+```python Python
+import requests
+
+response = requests.post(
+    'http://localhost:3000/pipeline/build',
+    json={'username': 'johndoe'}
+)
+
+data = response.json()
+print(f"Built graph: {data['nodes']} nodes, {data['edges']} edges")
+```
+</CodeGroup>
+
+<CodeGroup>
+```json 200 Success
+{
+  "status": "complete",
+  "nodes": 1523,
+  "edges": 8742,
+  "clusters": 12,
+  "pageRankConverged": true
+}
+```
+
+```json 400 Bad Request (Missing Username)
+{
+  "error": "Missing required field: username"
+}
+```
+
+```json 400 Bad Request (No Data)
+{
+  "error": "No data found. Fetch data first via /pipeline/fetch/lastfm"
+}
+```
+
+```json 404 Not Found (User)
+{
+  "error": "User not found. Fetch data first via /pipeline/fetch/lastfm"
+}
+```
+
+```json 500 Internal Server Error
+{
+  "error": "Build failed: Insufficient data to build graph"
+}
+```
+</CodeGroup>
+
+## Process Details
+
+The build operation performs the following steps:
+
+### 1. Load Scrobbles
+
+Reads `data/lastfm-scrobbles-{username}.json` from the filesystem.
+
+### 2. Build Graph
+
+- Creates nodes for unique songs (artist + track)
+- Creates directed edges for sequential listening transitions
+- Aggregates edge weights (transition counts)
+- Extracts metadata (play dates, album art, URLs)
+
+### 3. Enrich Graph
+
+Runs analysis algorithms:
+
+<Steps>
+  <Step title="PageRank">
+    Computes centrality scores for each song using weighted PageRank
+  </Step>
+  
+  <Step title="Clustering">
+    Detects communities using the Louvain algorithm
+  </Step>
+  
+  <Step title="Statistics">
+    Calculates degree distributions and rankings
+  </Step>
+</Steps>
+
+### 4. Compute Layouts
+
+Generates visualization coordinates using three layout algorithms:
+- **PageRank layout**: Positions based on centrality
+- **MDS layout**: Multidimensional scaling for similarity
+- **Weighted MDS**: MDS with edge weights
+
+### 5. Persist to Database
+
+- Clears existing graph data for the user
+- Inserts nodes with all computed properties
+- Inserts edges with weights
+- Stores metadata
+
+## Prerequisites
+
+<Warning>
+You must fetch scrobble data first using [POST /pipeline/fetch/lastfm](/api/pipeline/fetch-lastfm) before building the graph.
+</Warning>
+
+Alternatively, use [POST /pipeline/run](/api/pipeline/run-pipeline) to fetch and build in a single asynchronous operation.
+
+## Performance Considerations
+
+Build time depends on graph size:
+
+| Scrobbles | Nodes | Edges | Build Time |
+|-----------|-------|-------|------------|
+| 1,000     | ~300  | ~800  | 1-2s       |
+| 10,000    | ~1,500| ~8,000| 5-10s      |
+| 50,000    | ~5,000| ~30,000| 30-60s    |
+| 100,000+  | ~10,000| ~70,000| 2-5 min   |
+
+<Note>
+This endpoint is **synchronous** and may time out for very large graphs. For graphs with >50k scrobbles, use the async [POST /pipeline/run](/api/pipeline/run-pipeline) endpoint.
+</Note>
+
+## Data Cleanup
+
+<Warning>
+Building a graph **clears all existing graph data** for the user before inserting new data. This operation is destructive and cannot be undone.
+</Warning>
+
+## Next Steps
+
+After building the graph, you can:
+
+<CardGroup cols={2}>
+  <Card title="Get Graph" icon="chart-network" href="/api/graph/get-graph">
+    Retrieve the complete graph
+  </Card>
+  <Card title="Get Analysis" icon="chart-line" href="/api/graph/get-analysis">
+    View rankings and clusters
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<Accordion title="Build fails with 'No data found'">
+You need to fetch scrobbles first using `POST /pipeline/fetch/lastfm`. The build endpoint reads from the local filesystem at `data/lastfm-scrobbles-{username}.json`.
+</Accordion>
+
+<Accordion title="Build is very slow or times out">
+For large scrobble histories (>50k), use the async pipeline endpoint `POST /pipeline/run` which queues a background job.
+</Accordion>
+
+<Accordion title="PageRank didn't converge">
+This is normal for very sparse or disconnected graphs. The PageRank scores are still valid and usable.
+</Accordion>
+
+## Notes
+
+<Note>
+- The build process is **synchronous** and blocks until complete
+- Graph data is stored in PostgreSQL (not in JSON files)
+- Each build completely replaces previous graph data for that user
+- Layout computation can take significant time for large graphs
+</Note>

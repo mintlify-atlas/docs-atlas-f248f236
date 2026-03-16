@@ -1,0 +1,273 @@
+---
+title: Understanding Rotations
+description: Learn how rotations work and how they shape your listening experience
+---
+
+## What is a Rotation?
+
+A **rotation** is a curated collection of music that determines what you listen to. Unlike traditional playlists that play in a fixed order, rotations are dynamic and adapt based on your listening patterns.
+
+<Info>
+  When you listen to a song, it automatically enters your **Current Rotation**. Over time, your rotation evolves to reflect your active listening habits.
+</Info>
+
+## Core Concepts
+
+### Current Rotation
+
+Your Current Rotation is the active set of songs you're cycling through. Think of it as your musical focus area:
+
+- Songs automatically added as you listen
+- Dynamically updates based on play frequency
+- Influences recommendations for new songs
+- Can contain songs from multiple playlists/sources
+
+### Rotation Radius
+
+The **rotation radius** controls how broad or narrow your rotation is:
+
+- **Small radius** - Tight focus on specific songs/albums
+- **Large radius** - Broader selection across genres
+- **Custom radius** - You decide the scope
+
+<Note>
+  Songs outside your rotation radius are available as recommendations, letting you discover new music while maintaining focus.
+</Note>
+
+## How Rotations Work
+
+<Steps>
+  <Step title="Import Music">
+    Add albums or playlists from Bandcamp, Spotify, YouTube, or Last.fm
+  </Step>
+  
+  <Step title="Start Playing">
+    Select a playlist and start listening. The first song enters your rotation.
+  </Step>
+  
+  <Step title="Automatic Addition">
+    As you play songs, they're automatically added to your Current Rotation
+  </Step>
+  
+  <Step title="Smart Recommendations">
+    The system suggests songs outside your current radius based on:
+    - Similar artists
+    - Genre tags
+    - Your listening graph connections
+  </Step>
+</Steps>
+
+## Multi-Rotation Mode
+
+Rotations supports managing multiple rotations simultaneously:
+
+```typescript
+// Example: Managing multiple rotations
+const rotations = [
+  {
+    name: "Morning Focus",
+    genres: ["ambient", "electronic"],
+    radius: "small"
+  },
+  {
+    name: "Evening Chill",
+    genres: ["jazz", "lofi"],
+    radius: "medium"
+  },
+  {
+    name: "Workout Energy",
+    genres: ["rock", "electronic"],
+    radius: "large"
+  }
+]
+```
+
+<Tip>
+  Create different rotations for different contexts (work, exercise, relaxation) and switch between them instantly.
+</Tip>
+
+## Rotation Storage
+
+Rotations uses TinyBase for local-first storage with automatic persistence:
+
+```typescript
+// From site/src/lib/store.ts
+import { createStore } from "tinybase"
+import { createLocalPersister } from "tinybase/persisters/persister-browser"
+
+const store = createStore()
+  .setTablesSchema({
+    playlists: {
+      id: { type: "string" },
+      track_cover_uri: { type: "string" },
+      name: { type: "string" },
+      artists: { type: "string" },
+      first_track_id: { type: "string" },
+      source: { type: "string" },
+    },
+    tracks: {
+      id: { type: "string" },
+      playlist_id: { type: "string" },
+      time_ms: { type: "number" },
+      name: { type: "string" },
+      artists: { type: "string" },
+      tags: { type: "string" },
+      stream_url: { type: "string" },
+      next_tracks: { type: "string" },
+    },
+  })
+  .setValuesSchema({
+    activePlaylist: { type: "string", default: "" },
+    activeTrack: { type: "string", default: "" },
+    trackTimestamp: { type: "number", default: 0 },
+    lastPlaylistId: { type: "string", default: "" },
+  })
+
+// Persister for localStorage
+const persister = createLocalPersister(store, "fucking-music-store")
+await persister.load()
+await persister.startAutoSave()
+```
+
+All rotation data is:
+- ✅ Stored locally in your browser
+- ✅ Automatically synchronized to localStorage
+- ✅ Available offline
+- ✅ Never sent to external servers
+
+## Rotation Metadata
+
+Each playlist in your rotation includes rich metadata:
+
+```typescript
+// From site/src/shared/types.ts
+export interface FuckingPlaylist {
+  id: PlaylistId
+  track_cover_uri: string
+  name: string
+  artists: string[]
+  first_track: FuckingTrack
+  totalDurationMs: number
+  source: PlaylistSource | null  // "spotify" | "youtube" | "bandcamp"
+}
+
+export interface FuckingTrack {
+  id: TrackId
+  time_ms: number
+  name: string
+  artists: string[]
+  tags?: string[]  // Genre/mood tags for recommendations
+  audio: AudioSource
+  next_tracks?: Record<PlaylistId, TrackId>  // Links to next tracks
+}
+```
+
+## Managing Your Rotation
+
+### Viewing Your Rotation
+
+Click **"View full rotation"** in the player to see all imported playlists:
+
+```typescript
+// From site/src/components/PlayerView.tsx
+function PlaylistsContent({ onPlaylistClick }) {
+  const [playlists, setPlaylists] = useState(() => db.getPlaylists())
+
+  return (
+    <div className="max-w-2xl mx-auto">
+      {playlists.map((playlist) => (
+        <div onClick={() => onPlaylistClick(playlist.id)}>
+          <img src={playlist.track_cover_uri} alt={playlist.name} />
+          <span>{playlist.name}</span>
+          <span>{playlist.artists[0]}</span>
+          {playlist.first_track.tags?.map((tag) => (
+            <span key={tag}>{tag}</span>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+```
+
+### Switching Playlists
+
+Click any playlist to switch to it. The player automatically:
+1. Saves your current position
+2. Loads the new playlist
+3. Updates your rotation state
+4. Starts playing from track 1 (or last position)
+
+### Track Connections
+
+Tracks can link to "next tracks" from other playlists, creating fluid transitions:
+
+```typescript
+const currentTrack = {
+  id: "track-123",
+  name: "Song A",
+  next_tracks: {
+    "play-abc": "track-456",  // Points to Song B in another playlist
+    "play-xyz": "track-789"   // Alternative next track
+  }
+}
+```
+
+These connections power:
+- **Smart recommendations** based on actual listening paths
+- **Graph visualization** showing how songs connect
+- **Seamless transitions** between playlists
+
+## Rotation Analytics
+
+Your rotation data feeds into the listening graph for analysis:
+
+<CardGroup cols={2}>
+  <Card title="Play Frequency" icon="chart-column">
+    See which songs dominate your rotation
+  </Card>
+  <Card title="Transition Patterns" icon="arrows-turn-right">
+    Discover common song sequences
+  </Card>
+  <Card title="Temporal Trends" icon="calendar">
+    Track how your rotation evolves over time
+  </Card>
+  <Card title="Genre Balance" icon="layer-group">
+    Visualize genre distribution
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+<Tip>
+  **Start small** - Begin with 2-3 playlists and expand as you develop your rotation
+</Tip>
+
+<Tip>
+  **Tag your tracks** - Add genre/mood tags for better recommendations
+</Tip>
+
+<Tip>
+  **Review periodically** - Check your rotation view weekly to discover patterns
+</Tip>
+
+<Warning>
+  Don't add too many playlists at once - it dilutes your rotation and makes recommendations less relevant
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Listening Graph" href="/concepts/listening-graph">
+    Learn how rotations power graph analysis
+  </Card>
+  <Card title="Music Player" href="/features/music-player">
+    Explore player features and controls
+  </Card>
+  <Card title="Playlists" href="/features/playlists">
+    Deep dive into playlist management
+  </Card>
+  <Card title="Adding Music" href="/sources/bandcamp">
+    Import music from various sources
+  </Card>
+</CardGroup>

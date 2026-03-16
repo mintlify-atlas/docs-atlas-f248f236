@@ -1,0 +1,536 @@
+---
+title: Bandcamp Integration
+description: Import and play albums directly from Bandcamp
+---
+
+## Overview
+
+Bandcamp is the most fully-supported music source in Rotations, offering:
+
+- ✅ Direct album imports from URLs
+- ✅ Full metadata extraction (artist, tracks, artwork, tags)
+- ✅ MP3 streaming without authentication
+- ✅ Automatic offline caching
+- ✅ No API keys or configuration required
+
+<Info>
+  Bandcamp albums work out of the box - just paste a URL and start listening!
+</Info>
+
+## How It Works
+
+The Bandcamp integration uses web scraping to extract album data:
+
+<Steps>
+  <Step title="User Provides URL">
+    Paste a Bandcamp album URL in the Add Music dialog:
+    ```
+    https://artistname.bandcamp.com/album/album-name
+    ```
+  </Step>
+  
+  <Step title="Scraper Fetches Page">
+    The backend scraper fetches the Bandcamp page HTML
+  </Step>
+  
+  <Step title="Extract Embedded Data">
+    Bandcamp embeds album data in JavaScript:
+    ```javascript
+    var TralbumData = {
+      artist: "Artist Name",
+      current: { title: "Album Title" },
+      trackinfo: [
+        {
+          title: "Track 1",
+          file: { "mp3-128": "https://...stream.mp3" },
+          duration: 180.5
+        }
+      ]
+    }
+    ```
+  </Step>
+  
+  <Step title="Convert to Playlist">
+    Data transformed into Rotations playlist format:
+    ```typescript
+    const playlist: FuckingPlaylist = {
+      id: "play-bandcamp-123",
+      name: albumData.current.title,
+      artists: [albumData.artist],
+      track_cover_uri: albumData.albumArt,
+      source: "bandcamp"
+    }
+    ```
+  </Step>
+  
+  <Step title="Store Locally">
+    Playlist and tracks saved to IndexedDB for immediate playback
+  </Step>
+</Steps>
+
+## Supported URL Formats
+
+<Tabs>
+  <Tab title="Album URLs">
+    ```
+    https://artistname.bandcamp.com/album/album-name
+    https://label.bandcamp.com/album/artist-album-name
+    https://custom-domain.com/album/album-name
+    ```
+    
+    ✅ Fully supported - imports entire album
+  </Tab>
+  
+  <Tab title="Track URLs">
+    ```
+    https://artistname.bandcamp.com/track/track-name
+    ```
+    
+    ✅ Supported - imports as single-track playlist
+  </Tab>
+  
+  <Tab title="Artist URLs">
+    ```
+    https://artistname.bandcamp.com
+    ```
+    
+    ❌ Not supported - must link to specific album/track
+  </Tab>
+</Tabs>
+
+## Implementation
+
+### Add Music Button
+
+```typescript
+// From site/src/components/AddMusicButton.tsx
+export const AddBandcampButton = ({ text }: { text?: string }) => {
+  const [showInput, setShowInput] = useState(false)
+  const [inputValue, setInputValue] = useState("")
+  const { setPlaylistAndTracks } = usePlayer()
+
+  const getApiEndpoint = (url: string): string => {
+    if (url.includes("spotify.com")) {
+      return "/api/spotify/scrape"
+    }
+    if (url.includes("youtube.com") || url.includes("youtu.be")) {
+      return "/api/youtube/scrape"
+    }
+    return "/api/bandcamp/scrape"  // Default
+  }
+
+  const handleSubmit = async () => {
+    if (!inputValue.trim()) return
+
+    try {
+      const endpoint = getApiEndpoint(inputValue)
+      const res = await fetch(`${endpoint}?url=${encodeURIComponent(inputValue)}`)
+      const data = await res.json()
+
+      if (!res.ok || data.error) {
+        alert(data.error || "Failed to load music")
+        return
+      }
+
+      // Save to database
+      db.insertPlaylist(data.playlist)
+      db.insertTracks(data.tracks, data.playlist.id)
+
+      // Start playing
+      setPlaylistAndTracks({ playlistId: data.playlist.id })
+      
+      setShowInput(false)
+      setInputValue("")
+    } catch (e) {
+      alert("Failed to load music")
+    }
+  }
+
+  return (
+    <Button onClick={() => setShowInput(true)}>
+      <img src="/bandcamp-logo.png" alt="" />
+      {text || "Add Music"}
+    </Button>
+  )
+}
+```
+
+### Scraper API
+
+The scraper endpoint extracts album data:
+
+```typescript
+// Example: site/src/pages/api/bandcamp/scrape.ts
+export async function GET({ request }: APIContext) {
+  const url = new URL(request.url)
+  const bandcampUrl = url.searchParams.get("url")
+
+  if (!bandcampUrl) {
+    return new Response(
+      JSON.stringify({ error: "Missing url parameter" }),
+      { status: 400 }
+    )
+  }
+
+  try {
+    // Fetch Bandcamp page
+    const response = await fetch(bandcampUrl)
+    const html = await response.text()
+
+    // Extract TralbumData from script tag
+    const dataMatch = html.match(/var TralbumData = ({[^}]+})/)
+    if (!dataMatch) {
+      return new Response(
+        JSON.stringify({ error: "Could not parse album data" }),
+        { status: 400 }
+      )
+    }
+
+    const albumData: BandcampPageData = JSON.parse(dataMatch[1])
+
+    // Convert to playlist format
+    const playlistId: PlaylistId = `play-bandcamp-${Date.now()}`
+    
+    const tracks: FuckingTrack[] = albumData.trackinfo.map((track, index) => ({
+      id: `track-bandcamp-${Date.now()}-${index}` as TrackId,
+      time_ms: Math.round(track.duration * 1000),
+      name: track.title,
+      artists: [albumData.artist],
+      tags: albumData.keywords || [],
+      audio: {
+        type: "stream",
+        url: track.file?.["mp3-128"] || "",
+      },
+    }))
+
+    const playlist: FuckingPlaylist = {
+      id: playlistId,
+      track_cover_uri: albumData.albumArt,
+      name: albumData.current.title,
+      artists: [albumData.artist],
+      first_track: tracks[0]!,
+      totalDurationMs: tracks.reduce((sum, t) => sum + t.time_ms, 0),
+      source: "bandcamp",
+    }
+
+    return new Response(
+      JSON.stringify({ playlist, tracks }),
+      { status: 200 }
+    )
+  } catch (error) {
+    return new Response(
+      JSON.stringify({ error: "Failed to scrape Bandcamp" }),
+      { status: 500 }
+    )
+  }
+}
+```
+
+## Data Extraction
+
+### Album Metadata
+
+```typescript
+interface BandcampPageData {
+  artist: string                    // Artist name
+  current: {
+    title: string                   // Album title
+    release_date?: string           // Release date
+    selling_band_id?: number        // Band ID
+  }
+  album_release_date?: string       // Alternative date field
+  url: string                       // Canonical URL
+  albumArt: string                  // Cover image URL
+  keywords?: string[]               // Genre tags
+}
+```
+
+### Track Information
+
+```typescript
+interface BandcampTrackInfo {
+  track_num: number                 // Position in album
+  title: string                     // Track title
+  title_link: string                // Track page URL
+  duration: number                  // Duration in seconds
+  artist: string | null             // Track artist (if different)
+  file?: {
+    "mp3-128"?: string             // 128kbps MP3 stream URL
+  }
+  track_id?: number                 // Bandcamp track ID
+}
+```
+
+### Genre Tags
+
+Bandcamp provides genre keywords:
+
+```typescript
+// Example tags
+const keywords = [
+  "electronic",
+  "ambient",
+  "experimental",
+  "Berlin"
+]
+
+// Stored in track metadata
+const track: FuckingTrack = {
+  // ...
+  tags: keywords,
+}
+```
+
+Tags are displayed in:
+- Playlist view (first 5 tags)
+- Graph visualization tooltips
+- Search/filter interfaces
+
+## Playback
+
+Bandcamp tracks use direct MP3 streaming:
+
+```typescript
+// From site/src/hooks/PlayerContext.tsx
+if (currentTrack.audio.type === "stream") {
+  // Bandcamp direct stream with caching
+  audioUrl = await musicCache.getOrFetch(
+    currentTrack.id,
+    currentTrack.audio.url
+  )
+  audioRef.current.src = audioUrl
+  audioRef.current.load()
+  await audioRef.current.play()
+}
+```
+
+**Features:**
+- First play: Stream from Bandcamp + cache
+- Subsequent plays: Load from cache (offline)
+- No authentication required
+- Gapless playback
+
+## Offline Mode
+
+Bandcamp tracks are automatically cached:
+
+<Steps>
+  <Step title="First Play">
+    Audio streamed from `track.file["mp3-128"]` URL
+  </Step>
+  
+  <Step title="Cache During Playback">
+    Audio blob stored in IndexedDB via `musicCache`
+  </Step>
+  
+  <Step title="Subsequent Plays">
+    Audio loaded from cache, no network request
+  </Step>
+  
+  <Step title="Works Offline">
+    Cached tracks play without internet connection
+  </Step>
+</Steps>
+
+<Info>
+  Average Bandcamp track: 5-10 MB. A 10-track album ≈ 50-100 MB of storage.
+</Info>
+
+## Limitations
+
+<Warning>
+  **CORS Restrictions**: Some Bandcamp albums have CORS policies that block scraping. These albums cannot be imported.
+</Warning>
+
+<Warning>
+  **Pay-What-You-Want Albums**: Free/PWYW albums work. Paid albums may require purchase to access stream URLs.
+</Warning>
+
+<Warning>
+  **Private Albums**: Unreleased or private albums are not accessible via scraping.
+</Warning>
+
+## Troubleshooting
+
+<Accordion title="Import Fails">
+  **Symptoms:** "Failed to load music" error
+  
+  **Causes:**
+  - Invalid URL format
+  - CORS restrictions on album
+  - Album is private/unreleased
+  - Network issues
+  
+  **Solutions:**
+  - Verify URL points to public album
+  - Try a different album
+  - Check browser console for errors
+  - Ensure you have internet connection
+</Accordion>
+
+<Accordion title="No Audio Playing">
+  **Symptoms:** Playlist imported but no sound
+  
+  **Causes:**
+  - Stream URL not found in page data
+  - Album requires purchase
+  - Browser blocking audio autoplay
+  
+  **Solutions:**
+  - Click play button manually (browser autoplay policy)
+  - Verify album is free/PWYW
+  - Check browser console for 403/404 errors
+</Accordion>
+
+<Accordion title="Missing Metadata">
+  **Symptoms:** No album art, tags, or track info
+  
+  **Causes:**
+  - Bandcamp page structure changed
+  - Scraper regex not matching
+  - Incomplete album data on Bandcamp
+  
+  **Solutions:**
+  - Report issue with album URL
+  - Try re-importing
+  - Album may just lack that metadata
+</Accordion>
+
+<Accordion title="Tracks Out of Order">
+  **Symptoms:** Tracks play in wrong sequence
+  
+  **Causes:**
+  - Bandcamp `track_num` field incorrect
+  - Array index mismatch
+  
+  **Solutions:**
+  - Track order matches Bandcamp page order
+  - Cannot be manually reordered currently
+  - Re-import if order changed on Bandcamp
+</Accordion>
+
+## Best Practices
+
+<Tip>
+  **Import full albums** rather than individual tracks for better graph analysis
+</Tip>
+
+<Tip>
+  **Verify playback** before going offline - only played tracks are cached
+</Tip>
+
+<Tip>
+  **Check album tags** - they improve recommendations and graph clustering
+</Tip>
+
+<Tip>
+  **Support artists** on Bandcamp - Rotations is for personal use, please purchase music you love
+</Tip>
+
+## Example Workflow
+
+<Steps>
+  <Step title="Find Album on Bandcamp">
+    Browse Bandcamp and find an album you want to add
+  </Step>
+  
+  <Step title="Copy URL">
+    ```
+    https://grisatre.bandcamp.com/album/anima-animus
+    ```
+  </Step>
+  
+  <Step title="Open Rotations">
+    Navigate to the music player at `http://localhost:4321`
+  </Step>
+  
+  <Step title="Click Add Album">
+    Click the **Add Album** button (bottom left)
+  </Step>
+  
+  <Step title="Paste URL">
+    Paste the Bandcamp URL and press Enter
+  </Step>
+  
+  <Step title="Wait for Import">
+    Album metadata is fetched (1-3 seconds)
+  </Step>
+  
+  <Step title="Start Playing">
+    Player automatically loads and starts playing the album
+  </Step>
+  
+  <Step title="View in Rotation">
+    Click **"View full rotation"** to see the album in your library
+  </Step>
+</Steps>
+
+## API Response Format
+
+```typescript
+// Successful response
+{
+  "playlist": {
+    "id": "play-bandcamp-1234567890",
+    "name": "Album Title",
+    "artists": ["Artist Name"],
+    "track_cover_uri": "https://f4.bcbits.com/img/a123.jpg",
+    "source": "bandcamp",
+    "first_track": { /* ... */ },
+    "totalDurationMs": 2400000
+  },
+  "tracks": [
+    {
+      "id": "track-bandcamp-1234567890-0",
+      "name": "Track 1",
+      "artists": ["Artist Name"],
+      "time_ms": 180000,
+      "tags": ["electronic", "ambient"],
+      "audio": {
+        "type": "stream",
+        "url": "https://bandcamp.com/stream/track.mp3"
+      }
+    }
+    // ... more tracks
+  ]
+}
+
+// Error response
+{
+  "error": "Could not parse album data"
+}
+```
+
+## Performance
+
+<CardGroup cols={2}>
+  <Card title="Fast Imports" icon="bolt">
+    Album import completes in 1-3 seconds
+  </Card>
+  <Card title="Instant Playback" icon="play">
+    Starts playing immediately after import
+  </Card>
+  <Card title="Efficient Caching" icon="database">
+    MP3-128 format balances quality and size
+  </Card>
+  <Card title="No Rate Limits" icon="infinity">
+    Import as many albums as you want
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Music Player" href="/features/music-player">
+    Learn to play and navigate your imported albums
+  </Card>
+  <Card title="Offline Mode" href="/features/offline-mode">
+    Understand automatic caching
+  </Card>
+  <Card title="Playlists" href="/features/playlists">
+    Manage your music library
+  </Card>
+  <Card title="Other Sources" href="/sources/spotify">
+    Explore Spotify, YouTube, and Last.fm integration
+  </Card>
+</CardGroup>

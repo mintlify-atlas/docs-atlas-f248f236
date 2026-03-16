@@ -1,0 +1,442 @@
+---
+title: "Music Player Component"
+description: "Deep dive into the Astro music player implementation"
+---
+
+## Overview
+
+The music player is built with **Astro** and **React**, using a hybrid approach where React components handle interactivity while Astro provides the page shell and API routes.
+
+## Technology Stack
+
+<CardGroup cols={2}>
+  <Card title="Astro 5.x" icon="rocket">
+    SSG framework with React integration
+  </Card>
+  <Card title="React 19" icon="react">
+    UI components and state management
+  </Card>
+  <Card title="TinyBase" icon="database">
+    Reactive state store for music data
+  </Card>
+  <Card title="IndexedDB" icon="hard-drive">
+    Client-side audio file caching
+  </Card>
+</CardGroup>
+
+## Component Architecture
+
+### PlayerView Component
+
+The main orchestrator component that manages playback state:
+
+```typescript title="site/src/components/PlayerView.tsx" lines
+import { PlayerLayout } from './PlayerLayout';
+import { usePlayer } from '../hooks/usePlayer';
+import { useRotation } from '../hooks/useRotation';
+
+export default function PlayerView() {
+  const {
+    currentTrack,
+    isPlaying,
+    play,
+    pause,
+    next,
+    previous,
+    seek
+  } = usePlayer();
+  
+  const { rotation, updateRotation } = useRotation();
+  
+  return (
+    <PlayerLayout
+      track={currentTrack}
+      isPlaying={isPlaying}
+      onPlay={play}
+      onPause={pause}
+      onNext={next}
+      onPrevious={previous}
+      onSeek={seek}
+      rotation={rotation}
+    />
+  );
+}
+```
+
+### State Management with TinyBase
+
+TinyBase provides a reactive, relational data store:
+
+```typescript title="site/src/lib/tinybase-store.ts" lines
+import { createStore } from 'tinybase';
+
+export const store = createStore()
+  .setTablesSchema({
+    tracks: {
+      id: { type: 'string' },
+      title: { type: 'string' },
+      artist: { type: 'string' },
+      album: { type: 'string' },
+      source: { type: 'string' },
+      url: { type: 'string' },
+      cached: { type: 'boolean' },
+    },
+    playlists: {
+      id: { type: 'string' },
+      name: { type: 'string' },
+      createdAt: { type: 'number' },
+    },
+    playlistTracks: {
+      playlistId: { type: 'string' },
+      trackId: { type: 'string' },
+      position: { type: 'number' },
+    },
+  });
+```
+
+## Music Source Integration
+
+### Bandcamp
+
+<Steps>
+  <Step title="Extract Album Data">
+    Parse HTML from Bandcamp album pages to extract track info:
+    
+    ```typescript title="site/src/pages/api/bandcamp/scrape.ts" lines
+    export async function GET({ url }) {
+      const response = await fetch(url);
+      const html = await response.text();
+      
+      // Extract JSON-LD structured data
+      const jsonLd = html.match(/<script type="application\/ld\+json">(.*?)<\/script>/s);
+      const data = JSON.parse(jsonLd[1]);
+      
+      return {
+        tracks: data.track.itemListElement.map(item => ({
+          title: item.item.name,
+          url: item.item.url,
+          duration: item.item.duration
+        }))
+      };
+    }
+    ```
+  </Step>
+  
+  <Step title="Stream Audio">
+    Proxy audio streams to handle CORS:
+    
+    ```typescript title="site/src/pages/api/audio/proxy.ts"
+    export async function GET({ url }) {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      return new Response(blob, {
+        headers: { 'Content-Type': 'audio/mpeg' }
+      });
+    }
+    ```
+  </Step>
+</Steps>
+
+### Spotify
+
+<Steps>
+  <Step title="OAuth Flow">
+    Implement PKCE OAuth flow:
+    
+    ```typescript title="site/src/pages/api/spotify/authorize.ts"
+    export async function GET() {
+      const codeVerifier = generateCodeVerifier();
+      const codeChallenge = await generateCodeChallenge(codeVerifier);
+      
+      const params = new URLSearchParams({
+        client_id: import.meta.env.SPOTIFY_CLIENT_ID,
+        response_type: 'code',
+        redirect_uri: import.meta.env.SPOTIFY_REDIRECT_URI,
+        code_challenge_method: 'S256',
+        code_challenge: codeChallenge,
+        scope: 'streaming user-read-playback-state user-modify-playback-state'
+      });
+      
+      return Response.redirect(
+        `https://accounts.spotify.com/authorize?${params}`
+      );
+    }
+    ```
+  </Step>
+  
+  <Step title="Web Playback SDK">
+    Initialize Spotify player:
+    
+    ```typescript title="site/src/lib/spotify-client.ts" lines
+    export class SpotifyPlayer {
+      private player: Spotify.Player | null = null;
+      
+      async initialize(accessToken: string) {
+        await this.loadSDK();
+        
+        this.player = new Spotify.Player({
+          name: 'Rotations',
+          getOAuthToken: cb => cb(accessToken),
+          volume: 0.5
+        });
+        
+        await this.player.connect();
+      }
+      
+      async play(trackUri: string) {
+        await fetch('https://api.spotify.com/v1/me/player/play', {
+          method: 'PUT',
+          body: JSON.stringify({ uris: [trackUri] }),
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`
+          }
+        });
+      }
+    }
+    ```
+  </Step>
+</Steps>
+
+## Offline Mode
+
+### Audio Caching with IndexedDB
+
+```typescript title="site/src/lib/audio-cache.ts" lines
+const DB_NAME = 'rotations-audio-cache';
+const STORE_NAME = 'audio-files';
+
+export class AudioCache {
+  private db: IDBDatabase | null = null;
+  
+  async init() {
+    this.db = await openDB(DB_NAME, 1, {
+      upgrade(db) {
+        db.createObjectStore(STORE_NAME);
+      }
+    });
+  }
+  
+  async cacheTrack(trackId: string, audioBlob: Blob) {
+    await this.db.put(STORE_NAME, audioBlob, trackId);
+  }
+  
+  async getCachedTrack(trackId: string): Promise<Blob | null> {
+    return await this.db.get(STORE_NAME, trackId);
+  }
+  
+  async isCached(trackId: string): Promise<boolean> {
+    const count = await this.db.count(STORE_NAME, trackId);
+    return count > 0;
+  }
+}
+```
+
+### Cache-First Playback
+
+```typescript title="site/src/hooks/usePlayer.ts" lines
+export function usePlayer() {
+  const audioCache = useRef(new AudioCache());
+  
+  async function playTrack(trackId: string) {
+    const track = store.getCell('tracks', trackId, 'url');
+    
+    // Try cache first
+    const cached = await audioCache.current.getCachedTrack(trackId);
+    if (cached) {
+      const url = URL.createObjectURL(cached);
+      audioRef.current.src = url;
+      audioRef.current.play();
+      return;
+    }
+    
+    // Stream and cache in background
+    audioRef.current.src = track;
+    audioRef.current.play();
+    
+    // Cache for next time
+    fetch(track)
+      .then(r => r.blob())
+      .then(blob => audioCache.current.cacheTrack(trackId, blob));
+  }
+}
+```
+
+## Rotation System
+
+### Current Rotation Tracking
+
+```typescript title="site/src/hooks/useRotation.ts" lines
+import { store } from '../lib/tinybase-store';
+
+export function useRotation() {
+  const [rotation, setRotation] = useState<string[]>([]);
+  
+  // Add to rotation when a track is played
+  useEffect(() => {
+    const listener = store.addListener(
+      'currentTrack',
+      null,
+      (store, tableId, rowId) => {
+        const trackId = rowId as string;
+        if (!rotation.includes(trackId)) {
+          setRotation(prev => [...prev, trackId]);
+        }
+      }
+    );
+    
+    return () => store.delListener(listener);
+  }, [rotation]);
+  
+  return { rotation, setRotation };
+}
+```
+
+### Rotation Radius
+
+Control how many songs outside your rotation to show:
+
+```typescript
+interface RotationConfig {
+  radius: number;        // How many songs outside rotation to include
+  algorithm: 'random' | 'pagerank' | 'recent';
+}
+
+function getRecommendations(rotation: string[], config: RotationConfig) {
+  const inRotation = new Set(rotation);
+  const allTracks = store.getTable('tracks');
+  
+  // Get tracks outside rotation
+  const candidates = Object.keys(allTracks)
+    .filter(id => !inRotation.has(id));
+  
+  // Apply algorithm
+  switch (config.algorithm) {
+    case 'random':
+      return shuffle(candidates).slice(0, config.radius);
+    case 'pagerank':
+      return candidates
+        .sort((a, b) => getPageRank(b) - getPageRank(a))
+        .slice(0, config.radius);
+    case 'recent':
+      return candidates
+        .sort((a, b) => getLastPlayed(b) - getLastPlayed(a))
+        .slice(0, config.radius);
+  }
+}
+```
+
+## Playlist Management
+
+### Creating Playlists
+
+```typescript title="site/src/components/PlaylistManager.tsx" lines
+function createPlaylist(name: string, trackIds: string[]) {
+  const playlistId = `playlist-${Date.now()}`;
+  
+  // Add playlist
+  store.setRow('playlists', playlistId, {
+    id: playlistId,
+    name,
+    createdAt: Date.now()
+  });
+  
+  // Add tracks
+  trackIds.forEach((trackId, index) => {
+    store.setRow('playlistTracks', `${playlistId}-${trackId}`, {
+      playlistId,
+      trackId,
+      position: index
+    });
+  });
+}
+```
+
+### Cross-Playlist Next Tracks
+
+Track next-track relationships across playlists:
+
+```typescript
+interface Track {
+  next_tracks?: Record<PlaylistId, TrackId>;
+}
+
+// When a track ends in a playlist context
+function getNextTrack(currentTrackId: TrackId, playlistId: PlaylistId) {
+  const track = store.getRow('tracks', currentTrackId);
+  
+  // Check explicit next track for this playlist
+  if (track.next_tracks?.[playlistId]) {
+    return track.next_tracks[playlistId];
+  }
+  
+  // Fall back to next in playlist order
+  const playlistTracks = store
+    .getRowsWhere('playlistTracks', row => row.playlistId === playlistId)
+    .sort((a, b) => a.position - b.position);
+  
+  const currentIndex = playlistTracks.findIndex(t => t.trackId === currentTrackId);
+  return playlistTracks[currentIndex + 1]?.trackId;
+}
+```
+
+## UI Components
+
+### Player Layout
+
+Main player UI with controls and visualizations:
+
+```typescript title="site/src/components/PlayerLayout.tsx"
+export function PlayerLayout({
+  track,
+  isPlaying,
+  onPlay,
+  onPause,
+  onNext,
+  onPrevious
+}) {
+  return (
+    <div className="flex flex-col h-screen bg-[#0B0B0B]">
+      {/* Track Info */}
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-4xl font-bold">{track.title}</h1>
+          <p className="text-xl text-gray-400">{track.artist}</p>
+        </div>
+      </div>
+      
+      {/* Controls */}
+      <div className="p-4 flex items-center justify-center gap-4">
+        <button onClick={onPrevious}>
+          <IconPrevious />
+        </button>
+        <button onClick={isPlaying ? onPause : onPlay}>
+          {isPlaying ? <IconPause /> : <IconPlay />}
+        </button>
+        <button onClick={onNext}>
+          <IconNext />
+        </button>
+      </div>
+      
+      {/* Progress Bar */}
+      <ProgressBar track={track} />
+    </div>
+  );
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Graph Server" icon="server" href="/developers/graph-server">
+    Learn about the API and pipeline
+  </Card>
+  <Card title="Graph Frontend" icon="chart-network" href="/developers/graph-frontend">
+    Explore the visualization component
+  </Card>
+  <Card title="Local Development" icon="code" href="/developers/local-development">
+    Start developing features
+  </Card>
+  <Card title="Testing" icon="vial" href="/developers/testing">
+    Test the music player
+  </Card>
+</CardGroup>

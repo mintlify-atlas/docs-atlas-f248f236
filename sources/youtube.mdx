@@ -1,0 +1,466 @@
+---
+title: YouTube Integration
+description: Stream music from YouTube videos
+---
+
+## Overview
+
+YouTube integration in Rotations is **currently in progress**. It provides:
+
+- ✅ Basic video ID extraction
+- ✅ Audio stream proxy
+- 🚧 Playlist import
+- ❌ Audio-only streaming (uses video currently)
+- ❌ Quality selection
+- ❌ Offline caching
+
+<Note>
+  YouTube support is experimental. Basic streaming works, but features are limited.
+</Note>
+
+## How It Works
+
+<Steps>
+  <Step title="User Provides URL">
+    Paste a YouTube video URL:
+    ```
+    https://www.youtube.com/watch?v=dQw4w9WgXcQ
+    https://youtu.be/dQw4w9WgXcQ
+    ```
+  </Step>
+  
+  <Step title="Extract Video ID">
+    The scraper extracts the video ID:
+    ```typescript
+    const videoId = extractYouTubeId(url)
+    // "dQw4w9WgXcQ"
+    ```
+  </Step>
+  
+  <Step title="Create Single-Track Playlist">
+    Video imported as a single-track playlist:
+    ```typescript
+    const track: FuckingTrack = {
+      id: "track-youtube-dQw4w9WgXcQ",
+      name: "Video Title",
+      artists: ["Channel Name"],
+      audio: {
+        type: "youtube",
+        id: "dQw4w9WgXcQ"
+      }
+    }
+    ```
+  </Step>
+  
+  <Step title="Stream via Proxy">
+    Audio streamed through server-side proxy:
+    ```typescript
+    audioRef.current.src = `/api/youtube/stream?id=dQw4w9WgXcQ`
+    ```
+  </Step>
+</Steps>
+
+## Supported URL Formats
+
+<Tabs>
+  <Tab title="Standard URLs">
+    ```
+    https://www.youtube.com/watch?v=VIDEO_ID
+    https://www.youtube.com/watch?v=VIDEO_ID&t=30s
+    https://m.youtube.com/watch?v=VIDEO_ID
+    ```
+    
+    ✅ Fully supported
+  </Tab>
+  
+  <Tab title="Short URLs">
+    ```
+    https://youtu.be/VIDEO_ID
+    https://youtu.be/VIDEO_ID?t=30
+    ```
+    
+    ✅ Fully supported
+  </Tab>
+  
+  <Tab title="Playlist URLs">
+    ```
+    https://www.youtube.com/playlist?list=PLAYLIST_ID
+    ```
+    
+    🚧 Planned - not yet supported
+  </Tab>
+  
+  <Tab title="Channel URLs">
+    ```
+    https://www.youtube.com/c/channelname
+    ```
+    
+    ❌ Not supported
+  </Tab>
+</Tabs>
+
+## Implementation
+
+### Video ID Extraction
+
+```typescript
+function extractYouTubeId(url: string): string | null {
+  // Standard format: watch?v=ID
+  const standardMatch = url.match(/[?&]v=([^&]+)/)
+  if (standardMatch) return standardMatch[1]
+  
+  // Short format: youtu.be/ID
+  const shortMatch = url.match(/youtu\.be\/([^?]+)/)
+  if (shortMatch) return shortMatch[1]
+  
+  return null
+}
+```
+
+### Scraper API
+
+```typescript
+// Example: site/src/pages/api/youtube/scrape.ts
+export async function GET({ request }: APIContext) {
+  const url = new URL(request.url)
+  const youtubeUrl = url.searchParams.get("url")
+
+  if (!youtubeUrl) {
+    return new Response(
+      JSON.stringify({ error: "Missing url parameter" }),
+      { status: 400 }
+    )
+  }
+
+  const videoId = extractYouTubeId(youtubeUrl)
+  if (!videoId) {
+    return new Response(
+      JSON.stringify({ error: "Invalid YouTube URL" }),
+      { status: 400 }
+    )
+  }
+
+  try {
+    // Fetch video metadata (using youtube-dl or similar)
+    const metadata = await fetchYouTubeMetadata(videoId)
+
+    const track: FuckingTrack = {
+      id: `track-youtube-${videoId}` as TrackId,
+      name: metadata.title,
+      artists: [metadata.channel],
+      time_ms: metadata.duration * 1000,
+      tags: [],
+      audio: {
+        type: "youtube",
+        id: videoId,
+      },
+    }
+
+    const playlist: FuckingPlaylist = {
+      id: `play-youtube-${videoId}` as PlaylistId,
+      track_cover_uri: metadata.thumbnail,
+      name: metadata.title,
+      artists: [metadata.channel],
+      first_track: track,
+      totalDurationMs: track.time_ms,
+      source: "youtube",
+    }
+
+    return new Response(
+      JSON.stringify({ playlist, tracks: [track] }),
+      { status: 200 }
+    )
+  } catch (error) {
+    return new Response(
+      JSON.stringify({ error: "Failed to fetch YouTube metadata" }),
+      { status: 500 }
+    )
+  }
+}
+```
+
+### Stream Proxy
+
+YouTube streams are proxied server-side:
+
+```typescript
+// Example: site/src/pages/api/youtube/stream.ts
+export async function GET({ request }: APIContext) {
+  const url = new URL(request.url)
+  const videoId = url.searchParams.get("id")
+
+  if (!videoId) {
+    return new Response("Missing id parameter", { status: 400 })
+  }
+
+  try {
+    // Extract audio stream URL using youtube-dl or similar
+    const streamUrl = await getYouTubeAudioUrl(videoId)
+
+    // Proxy the stream
+    const response = await fetch(streamUrl)
+    
+    // Forward headers for range requests
+    const headers = new Headers()
+    headers.set("Content-Type", "audio/mp4")
+    headers.set("Accept-Ranges", "bytes")
+    
+    if (response.headers.get("Content-Length")) {
+      headers.set("Content-Length", response.headers.get("Content-Length")!)
+    }
+
+    return new Response(response.body, {
+      status: response.status,
+      headers,
+    })
+  } catch (error) {
+    return new Response("Failed to stream YouTube audio", { status: 500 })
+  }
+}
+```
+
+## Playback
+
+YouTube tracks stream via proxy:
+
+```typescript
+// From site/src/hooks/PlayerContext.tsx
+if (currentTrack.audio.type === "youtube") {
+  // Proxy YouTube audio stream
+  audioUrl = `/api/youtube/stream?id=${currentTrack.audio.id}`
+  audioRef.current.src = audioUrl
+  audioRef.current.load()
+  await audioRef.current.play()
+}
+```
+
+**Characteristics:**
+- Streams on-demand (not cached)
+- Requires internet connection
+- Audio extracted from video
+- Variable bitrate
+
+## Offline Mode
+
+<Warning>
+  YouTube tracks are **not cached** for offline playback. Every play requires streaming from YouTube.
+</Warning>
+
+**Why not cached?**
+- YouTube stream URLs expire after ~6 hours
+- URLs are signed and tied to IP address
+- Large file sizes (5-15 MB per track)
+- Copyright considerations
+
+<Note>
+  Future enhancement: Cache audio blobs after extracting from stream
+</Note>
+
+## Limitations
+
+<Warning>
+  **Terms of Service**: YouTube TOS prohibits downloading videos. Use Rotations for streaming only, similar to playing videos in a browser.
+</Warning>
+
+<Warning>
+  **Stream Expiration**: Stream URLs expire after ~6 hours. If playback fails, try re-importing the video.
+</Warning>
+
+<Warning>
+  **Quality**: Currently uses default quality. No manual quality selection.
+</Warning>
+
+<Warning>
+  **Age-Restricted Videos**: Cannot be accessed without authentication.
+</Warning>
+
+<Warning>
+  **Region Locks**: Region-restricted videos won't play in blocked regions.
+</Warning>
+
+## Playlist Import (Planned)
+
+<Note>
+  Playlist import is planned but not yet implemented.
+</Note>
+
+**Planned workflow:**
+
+<Steps>
+  <Step title="Paste Playlist URL">
+    ```
+    https://www.youtube.com/playlist?list=PLx...
+    ```
+  </Step>
+  
+  <Step title="Extract Video IDs">
+    Scraper fetches all videos in playlist
+  </Step>
+  
+  <Step title="Create Multi-Track Playlist">
+    Each video becomes a track
+  </Step>
+  
+  <Step title="Stream Individually">
+    Tracks stream one at a time as played
+  </Step>
+</Steps>
+
+## Status & Roadmap
+
+**Currently Working:**
+- ✅ Single video import
+- ✅ Video ID extraction
+- ✅ Basic streaming via proxy
+- ✅ Metadata extraction
+
+**In Progress:**
+- 🚧 Playlist import
+- 🚧 Better error handling
+- 🚧 Stream URL caching (6 hour TTL)
+
+**Planned:**
+- ❌ Audio-only streaming (currently streams video)
+- ❌ Quality selection
+- ❌ Offline caching (with expiration)
+- ❌ Thumbnails for tracks
+- ❌ Description/tags extraction
+
+## Troubleshooting
+
+<Accordion title="Import Fails">
+  **Causes:**
+  - Invalid URL format
+  - Video ID extraction failed
+  - Video is private/deleted
+  - Age-restricted content
+  - Region-locked video
+  
+  **Solutions:**
+  - Verify URL is correct
+  - Check video is public
+  - Try a different video
+  - Check browser console for errors
+</Accordion>
+
+<Accordion title="Playback Fails">
+  **Causes:**
+  - Stream URL expired (>6 hours old)
+  - Network issues
+  - Video removed/deleted
+  - YouTube blocking
+  
+  **Solutions:**
+  - Re-import the video
+  - Check internet connection
+  - Try a different video
+  - Check server logs for errors
+</Accordion>
+
+<Accordion title="Poor Quality">
+  **Causes:**
+  - Default quality selection
+  - No quality options implemented
+  
+  **Solutions:**
+  - Quality selection coming in future update
+  - Currently uses YouTube's automatic quality
+</Accordion>
+
+<Accordion title="Stream Buffering">
+  **Causes:**
+  - Slow internet connection
+  - YouTube throttling
+  - Server proxy overhead
+  
+  **Solutions:**
+  - Check network speed
+  - Try restarting playback
+  - Consider using Bandcamp for offline capability
+</Accordion>
+
+## Legal Considerations
+
+<Warning>
+  **Copyright**: Respect copyright laws. Use YouTube integration only for personal, non-commercial listening. Support artists through official channels.
+</Warning>
+
+<Warning>
+  **Terms of Service**: YouTube TOS prohibits downloading videos. Rotations streams audio similar to playing videos in a browser, but use at your own risk.
+</Warning>
+
+<Tip>
+  For offline listening, use Bandcamp integration instead. YouTube is best for:
+  - Previewing music
+  - Content not available elsewhere
+  - Temporary listening
+</Tip>
+
+## Best Practices
+
+<Tip>
+  **Use YouTube for previews** - Import music you want to try before purchasing
+</Tip>
+
+<Tip>
+  **Re-import old videos** - Stream URLs expire after 6 hours
+</Tip>
+
+<Tip>
+  **Check video availability** - Ensure video is public before importing
+</Tip>
+
+<Tip>
+  **Prefer official uploads** - Better quality and metadata
+</Tip>
+
+## Example Workflow
+
+<Steps>
+  <Step title="Find Video">
+    Browse YouTube and find a music video
+  </Step>
+  
+  <Step title="Copy URL">
+    ```
+    https://www.youtube.com/watch?v=dQw4w9WgXcQ
+    ```
+  </Step>
+  
+  <Step title="Open Rotations">
+    Navigate to the music player
+  </Step>
+  
+  <Step title="Click Add Album">
+    Click the **Add Album** button
+  </Step>
+  
+  <Step title="Paste URL">
+    Paste the YouTube URL and press Enter
+  </Step>
+  
+  <Step title="Wait for Import">
+    Video metadata is fetched (2-5 seconds)
+  </Step>
+  
+  <Step title="Start Playing">
+    Player automatically loads and streams the audio
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Bandcamp" href="/sources/bandcamp">
+    Import albums with offline support
+  </Card>
+  <Card title="Spotify" href="/sources/spotify">
+    Sync Spotify playlists
+  </Card>
+  <Card title="Last.fm" href="/sources/lastfm">
+    Build listening graph from scrobbles
+  </Card>
+  <Card title="Music Player" href="/features/music-player">
+    Learn to use the player
+  </Card>
+</CardGroup>

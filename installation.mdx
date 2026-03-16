@@ -1,0 +1,312 @@
+---
+title: Installation Guide
+description: Complete installation and configuration guide for Rotations
+---
+
+## System Requirements
+
+- **Node.js**: >= 20.0.0
+- **Package Manager**: pnpm (recommended) or npm
+- **Docker**: For running PostgreSQL (graph server only)
+- **Operating System**: Linux, macOS, or Windows with WSL2
+
+## Repository Structure
+
+Rotations is a monorepo with three main packages:
+
+```bash
+rotations/
+├── site/              # Music player frontend (Astro + React)
+├── graph-server/      # Graph analysis backend (Node.js)
+├── graph-frontend/    # Graph visualization (React)
+├── docker-compose.yaml
+├── pnpm-workspace.yaml
+└── package.json
+```
+
+## Installation Steps
+
+<Steps>
+  <Step title="Clone Repository">
+    ```bash
+    git clone https://github.com/cdxker/rotations.git
+    cd rotations
+    ```
+  </Step>
+
+  <Step title="Install Dependencies">
+    Using pnpm (recommended):
+    
+    ```bash
+    pnpm install
+    ```
+    
+    Or using npm:
+    
+    ```bash
+    npm install
+    ```
+    
+    This installs all dependencies for the workspace, including all three packages.
+  </Step>
+
+  <Step title="Set Up PostgreSQL (Optional)">
+    Only needed if you're using the graph server:
+    
+    ```bash
+    docker compose up -d
+    ```
+    
+    This starts PostgreSQL on `localhost:5432` with:
+    - Database: `graph`
+    - User: `postgres`
+    - Password: `postgres`
+  </Step>
+
+  <Step title="Configure Environment Variables">
+    Each package requires its own configuration.
+  </Step>
+</Steps>
+
+## Package Configuration
+
+<Tabs>
+  <Tab title="Site (Music Player)">
+    The site package runs entirely in the browser and requires no backend configuration.
+    
+    ### Optional: Spotify Integration
+    
+    If you want Spotify support, create `site/.env`:
+    
+    ```env
+    PUBLIC_SPOTIFY_CLIENT_ID=your_client_id
+    SPOTIFY_CLIENT_SECRET=your_client_secret
+    PUBLIC_SPOTIFY_REDIRECT_URI=http://localhost:4321/api/spotify/callback
+    ```
+    
+    <Info>
+      Get Spotify credentials from [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
+    </Info>
+  </Tab>
+
+  <Tab title="Graph Server">
+    Create `graph-server/.env`:
+    
+    ```env
+    LASTFM_API_KEY=your_lastfm_api_key
+    DATABASE_URL=postgresql://postgres:postgres@localhost:5432/graph
+    GRAPH_SERVER_PORT=3001
+    ```
+    
+    ### Getting a Last.fm API Key
+    
+    <Steps>
+      <Step title="Create Last.fm Account">
+        Sign up at [last.fm](https://www.last.fm/join)
+      </Step>
+      <Step title="Create API Application">
+        Visit [Last.fm API Account Creation](https://www.last.fm/api/account/create)
+      </Step>
+      <Step title="Get API Key">
+        Copy the API key and add it to your `.env` file
+      </Step>
+    </Steps>
+  </Tab>
+
+  <Tab title="Graph Frontend">
+    Create `graph-frontend/.env`:
+    
+    ```env
+    VITE_GRAPH_API_URL=http://localhost:3001
+    ```
+    
+    This points the frontend to your graph server instance.
+  </Tab>
+</Tabs>
+
+## Development Setup
+
+### Running the Music Player
+
+```bash
+cd site
+pnpm dev
+```
+
+The player will be available at `http://localhost:4321`
+
+**Hot Module Replacement** is enabled, so changes are reflected instantly.
+
+### Running the Graph Server
+
+```bash
+cd graph-server
+pnpm dev
+```
+
+The API will be available at `http://localhost:3001`
+
+**Key Endpoints:**
+- `GET /graph?user=username` - Full graph data
+- `GET /graph/stats?user=username` - Graph statistics
+- `POST /pipeline/run` - Queue listening history import
+
+### Running the Graph Frontend
+
+```bash
+cd graph-frontend
+pnpm dev
+```
+
+The visualization will be available at `http://localhost:5173`
+
+## Production Build
+
+<Tabs>
+  <Tab title="Site">
+    ```bash
+    cd site
+    pnpm build
+    pnpm preview
+    ```
+    
+    The build output is in `site/dist/` and can be served by any static host.
+  </Tab>
+
+  <Tab title="Graph Server">
+    ```bash
+    cd graph-server
+    pnpm build
+    pnpm start
+    ```
+    
+    The compiled TypeScript is in `graph-server/dist/`
+  </Tab>
+
+  <Tab title="Graph Frontend">
+    ```bash
+    cd graph-frontend
+    pnpm build
+    pnpm preview
+    ```
+    
+    The build output is in `graph-frontend/dist/`
+  </Tab>
+</Tabs>
+
+## Importing Your First Data
+
+### Import a Bandcamp Album
+
+1. Navigate to the music player at `http://localhost:4321`
+2. Click **Add Album**
+3. Paste a Bandcamp album URL
+4. The album is automatically imported and cached for offline use
+
+### Import Last.fm History
+
+Use the provided script to fetch your entire listening history:
+
+```bash
+./reindex.sh your_lastfm_username
+```
+
+This script:
+1. Fetches all scrobbles from Last.fm (with rate limiting)
+2. Builds a weighted graph from sequential plays
+3. Computes PageRank and cluster analysis
+4. Stores everything in PostgreSQL
+
+<Warning>
+  Large histories (100k+ scrobbles) can take 30+ minutes due to API rate limits (~1 req/sec)
+</Warning>
+
+### Manual Pipeline Execution
+
+You can also trigger the pipeline via API:
+
+```bash
+curl -X POST http://localhost:3001/pipeline/run \
+  -H "Content-Type: application/json" \
+  -d '{"username":"your_lastfm_username"}'
+```
+
+Response:
+```json
+{
+  "jobId": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "queued"
+}
+```
+
+Check job status:
+```bash
+curl http://localhost:3001/pipeline/run/550e8400-e29b-41d4-a716-446655440000
+```
+
+## Verification
+
+<Steps>
+  <Step title="Check Site">
+    Visit `http://localhost:4321` and verify the player loads
+  </Step>
+  <Step title="Add Test Album">
+    Import a Bandcamp album and verify it plays
+  </Step>
+  <Step title="Check Graph Server">
+    ```bash
+    curl http://localhost:3001/graph/stats?user=your_username
+    ```
+    
+    Should return graph statistics
+  </Step>
+  <Step title="View Graph Visualization">
+    Visit `http://localhost:5173` and verify the graph renders
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<Accordion title="Last.fm API Key Not Working">
+  Verify your API key is correctly set in `graph-server/.env` and the server has been restarted.
+</Accordion>
+
+<Accordion title="PostgreSQL Connection Failed">
+  Ensure Docker is running:
+  ```bash
+  docker compose ps
+  ```
+  
+  Check logs:
+  ```bash
+  docker compose logs postgres
+  ```
+</Accordion>
+
+<Accordion title="Bandcamp Import Fails">
+  Some Bandcamp albums have CORS restrictions. The scraper works for most albums, but not all.
+</Accordion>
+
+<Accordion title="Port Already in Use">
+  Change the port in the respective package's configuration:
+  - Site: `astro.config.mjs` → `server.port`
+  - Graph Server: `.env` → `GRAPH_SERVER_PORT`
+  - Graph Frontend: `vite.config.ts` → `server.port`
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Core Concepts" href="/concepts/rotations">
+    Learn about rotations and how they work
+  </Card>
+  <Card title="Music Player Features" href="/features/music-player">
+    Explore player capabilities
+  </Card>
+  <Card title="Graph Visualization" href="/features/graph-visualization">
+    Understand the listening graph
+  </Card>
+  <Card title="Adding Music Sources" href="/sources/bandcamp">
+    Configure Bandcamp, Spotify, and more
+  </Card>
+</CardGroup>

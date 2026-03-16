@@ -1,0 +1,418 @@
+---
+title: Offline Mode
+description: How Rotations automatically caches music for offline playback
+---
+
+## Overview
+
+Rotations features **automatic offline mode** - all music is cached after the first stream, making it available without an internet connection.
+
+<Info>
+  No manual downloads or sync required. Just play a song once and it's cached forever.
+</Info>
+
+## How It Works
+
+The offline caching system uses IndexedDB and the Cache API:
+
+<Steps>
+  <Step title="First Play">
+    When you play a track for the first time, the audio is streamed from the source (Bandcamp, YouTube, etc.)
+  </Step>
+  
+  <Step title="Automatic Caching">
+    As the audio streams, it's simultaneously cached in IndexedDB
+  </Step>
+  
+  <Step title="Subsequent Plays">
+    Next time you play the track, it loads instantly from the local cache
+  </Step>
+  
+  <Step title="Offline Availability">
+    Even with no internet, cached tracks play normally
+  </Step>
+</Steps>
+
+## Implementation
+
+### Music Cache Service
+
+```typescript
+// From site/src/lib/musicCache.ts
+class MusicCache {
+  private db: IDBDatabase | null = null
+  private readonly DB_NAME = "rotations-music-cache"
+  private readonly STORE_NAME = "audio-blobs"
+
+  async init(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(this.DB_NAME, 1)
+      
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result
+        if (!db.objectStoreNames.contains(this.STORE_NAME)) {
+          db.createObjectStore(this.STORE_NAME)
+        }
+      }
+      
+      request.onsuccess = () => {
+        this.db = request.result
+        resolve()
+      }
+      
+      request.onerror = () => reject(request.error)
+    })
+  }
+
+  async getOrFetch(trackId: TrackId, sourceUrl: string): Promise<string> {
+    // Try cache first
+    const cached = await this.get(trackId)
+    if (cached) {
+      return URL.createObjectURL(cached)
+    }
+
+    // Fetch from source
+    const response = await fetch(sourceUrl)
+    const blob = await response.blob()
+
+    // Store in cache
+    await this.set(trackId, blob)
+
+    // Return blob URL
+    return URL.createObjectURL(blob)
+  }
+
+  private async get(trackId: TrackId): Promise<Blob | null> {
+    if (!this.db) await this.init()
+    
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.STORE_NAME], "readonly")
+      const store = transaction.objectStore(this.STORE_NAME)
+      const request = store.get(trackId)
+      
+      request.onsuccess = () => resolve(request.result ?? null)
+      request.onerror = () => reject(request.error)
+    })
+  }
+
+  private async set(trackId: TrackId, blob: Blob): Promise<void> {
+    if (!this.db) await this.init()
+    
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.STORE_NAME], "readwrite")
+      const store = transaction.objectStore(this.STORE_NAME)
+      const request = store.put(blob, trackId)
+      
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+    })
+  }
+}
+
+export const musicCache = new MusicCache()
+```
+
+### Player Integration
+
+```typescript
+// From site/src/hooks/PlayerContext.tsx
+useEffect(() => {
+  if (!currentTrack) return
+
+  let blobUrl: string | null = null
+
+  const loadAudio = async () => {
+    let audioUrl: string
+
+    if (currentTrack.audio.type === "youtube") {
+      // YouTube streams are proxied, not cached
+      audioUrl = `/api/youtube/stream?id=${currentTrack.audio.id}`
+    } else if (currentTrack.audio.type === "stream") {
+      // Bandcamp - fetch or load from cache
+      audioUrl = await musicCache.getOrFetch(
+        currentTrack.id,
+        currentTrack.audio.url
+      )
+      blobUrl = audioUrl  // Track for cleanup
+    }
+
+    if (audioRef.current) {
+      audioRef.current.src = audioUrl
+      audioRef.current.load()
+    }
+  }
+
+  loadAudio().then(() => {
+    if (audioRef.current) {
+      audioRef.current.play()
+    }
+  })
+
+  return () => {
+    // Clean up blob URLs to prevent memory leaks
+    if (blobUrl) {
+      URL.revokeObjectURL(blobUrl)
+    }
+  }
+}, [currentTrack])
+```
+
+## Storage Management
+
+### Storage Quota
+
+Browser storage limits vary:
+
+| Browser | Storage Limit |
+|---------|---------------|
+| Chrome | ~60% of disk space |
+| Firefox | ~50% of disk space |
+| Safari | 1 GB (can request more) |
+| Edge | ~60% of disk space |
+
+<Warning>
+  If storage is full, new tracks won't cache. The player will still stream them, but they won't be available offline.
+</Warning>
+
+### Check Storage Usage
+
+```typescript
+// Check current storage usage
+if (navigator.storage && navigator.storage.estimate) {
+  const estimate = await navigator.storage.estimate()
+  const usageInMB = (estimate.usage ?? 0) / (1024 * 1024)
+  const quotaInMB = (estimate.quota ?? 0) / (1024 * 1024)
+  
+  console.log(`Using ${usageInMB.toFixed(2)} MB of ${quotaInMB.toFixed(2)} MB`)
+  console.log(`${((estimate.usage ?? 0) / (estimate.quota ?? 1) * 100).toFixed(1)}% full`)
+}
+```
+
+### Request Persistent Storage
+
+```typescript
+// Request persistent storage (won't be evicted)
+if (navigator.storage && navigator.storage.persist) {
+  const isPersistent = await navigator.storage.persist()
+  if (isPersistent) {
+    console.log("Storage will not be cleared except by explicit user action")
+  }
+}
+```
+
+## Cache Behavior by Source
+
+<Tabs>
+  <Tab title="Bandcamp">
+    **Fully cached**
+    
+    - Direct MP3 stream URLs
+    - Cached after first play
+    - Average track: 5-10 MB
+    - Works completely offline
+    
+    ```typescript
+    const audioUrl = await musicCache.getOrFetch(
+      "track-bandcamp-123",
+      "https://bandcamp.com/download/track.mp3"
+    )
+    ```
+  </Tab>
+  
+  <Tab title="YouTube">
+    **Not cached (proxied)**
+    
+    - Audio extracted and proxied server-side
+    - Streamed on-demand each time
+    - Not stored locally
+    - Requires internet connection
+    
+    ```typescript
+    const audioUrl = `/api/youtube/stream?id=${youtubeVideoId}`
+    // No caching - always streams
+    ```
+    
+    <Note>
+      Future enhancement: Cache YouTube audio blobs
+    </Note>
+  </Tab>
+  
+  <Tab title="Spotify">
+    **Not cached (SDK streaming)**
+    
+    - Uses Spotify Web Playback SDK
+    - Spotify handles caching internally
+    - Requires active Spotify Premium subscription
+    - Requires internet connection
+    
+    ```typescript
+    // Spotify playback handled by SDK, not HTML audio
+    await fetch("/api/spotify/play", {
+      method: "PUT",
+      body: JSON.stringify({
+        device_id: spotifyDeviceId,
+        context_uri: `spotify:playlist:${playlistId}`,
+      }),
+    })
+    ```
+  </Tab>
+</Tabs>
+
+## Cache Persistence
+
+### Automatic Persistence
+
+The cache persists across:
+- ✅ Browser restarts
+- ✅ Tab closes
+- ✅ System reboots
+- ✅ Network disconnections
+
+### Cache Clearing
+
+Cache is only cleared when:
+- User manually clears browser data
+- Storage quota exceeded (browser evicts old data)
+- IndexedDB corruption (rare)
+
+<Warning>
+  Clearing browser data will delete your entire music cache. You'll need to re-stream tracks.
+</Warning>
+
+## Offline Detection
+
+The player automatically detects offline mode:
+
+```typescript
+// Monitor online/offline status
+window.addEventListener("online", () => {
+  console.log("Back online - can stream new tracks")
+})
+
+window.addEventListener("offline", () => {
+  console.log("Offline - playing cached tracks only")
+})
+
+// Check current status
+if (navigator.onLine) {
+  // Can stream new tracks
+} else {
+  // Cached tracks only
+}
+```
+
+<Info>
+  When offline, attempting to play an uncached track will show an error. Only previously played (cached) tracks work.
+</Info>
+
+## Memory Management
+
+### Blob URL Lifecycle
+
+```typescript
+// Create blob URL from cached blob
+const blobUrl = URL.createObjectURL(blob)
+audioRef.current.src = blobUrl
+
+// Revoke when done to free memory
+URL.revokeObjectURL(blobUrl)
+```
+
+**Best practices:**
+- Create blob URLs only when needed
+- Revoke immediately after use
+- Don't store blob URLs long-term
+
+### Audio Element Cleanup
+
+```typescript
+useEffect(() => {
+  // Load and play audio
+  
+  return () => {
+    // Cleanup on unmount
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current.src = ""  // Release blob
+      audioRef.current.load()    // Clear buffers
+    }
+  }
+}, [currentTrack])
+```
+
+## Cache Performance
+
+<CardGroup cols={2}>
+  <Card title="Instant Playback" icon="bolt">
+    Cached tracks start playing in &lt;100ms
+  </Card>
+  <Card title="No Buffering" icon="wifi">
+    Entire track available immediately
+  </Card>
+  <Card title="Efficient Storage" icon="database">
+    MP3 compression keeps file sizes small
+  </Card>
+  <Card title="Background Caching" icon="cloud-arrow-down">
+    Doesn't block playback while caching
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<Accordion title="Track Won't Cache">
+  - Check browser storage quota (might be full)
+  - Verify source URL is accessible
+  - Check browser console for errors
+  - Try clearing cache and re-caching
+</Accordion>
+
+<Accordion title="Offline Playback Fails">
+  - Verify track was played at least once while online
+  - Check if browser data was cleared
+  - Ensure IndexedDB is enabled in browser
+  - Try re-importing the playlist
+</Accordion>
+
+<Accordion title="High Storage Usage">
+  - Each track is 5-10 MB on average
+  - 100 tracks ≈ 500 MB - 1 GB
+  - Clear browser data to free space
+  - Consider removing unused playlists
+</Accordion>
+
+<Accordion title="Cache Corruption">
+  Rare but possible. Signs:
+  - Tracks play with wrong audio
+  - Playback stutters despite caching
+  - Console errors about IndexedDB
+  
+  **Fix:** Clear browser data and re-cache
+</Accordion>
+
+## Future Enhancements
+
+<Note>
+  Planned features:
+  - Manual cache management UI
+  - Selective playlist caching
+  - Cache size limits
+  - YouTube audio caching
+  - Service Worker pre-caching
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Music Player" href="/features/music-player">
+    Learn about player features
+  </Card>
+  <Card title="Adding Music" href="/sources/bandcamp">
+    Import tracks for offline use
+  </Card>
+  <Card title="Playlists" href="/features/playlists">
+    Manage your music library
+  </Card>
+  <Card title="Installation" href="/installation">
+    Set up Rotations locally
+  </Card>
+</CardGroup>

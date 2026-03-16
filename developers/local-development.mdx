@@ -1,0 +1,461 @@
+---
+title: "Local Development Guide"
+description: "Best practices and workflows for developing Rotations features"
+---
+
+## Development Workflow
+
+Rotations uses a **monorepo structure** with hot-reloading for all packages. Follow these best practices for an efficient development experience.
+
+## Starting Development Servers
+
+### All Services at Once
+
+```bash
+pnpm dev:all
+```
+
+This starts all three services in parallel:
+- Music player: `http://localhost:4321`
+- Graph server: `http://localhost:3001`
+- Graph frontend: `http://localhost:3000`
+
+### Individual Services
+
+<Tabs>
+  <Tab title="Music Player">
+    ```bash
+    cd site
+    pnpm dev
+    ```
+    
+    Astro dev server with hot module replacement.
+  </Tab>
+  
+  <Tab title="Graph Server">
+    ```bash
+    cd graph-server
+    pnpm dev
+    ```
+    
+    Node.js with `--watch` flag - auto-restarts on file changes.
+  </Tab>
+  
+  <Tab title="Graph Frontend">
+    ```bash
+    cd graph-frontend
+    pnpm dev
+    ```
+    
+    Vite dev server with fast HMR.
+  </Tab>
+</Tabs>
+
+## Making Changes
+
+### Music Player Development
+
+<Steps>
+  <Step title="Edit React components">
+    Components in `site/src/components/` hot-reload automatically:
+    
+    ```typescript title="site/src/components/PlayerView.tsx"
+    export default function PlayerView() {
+      // Your changes here - saved automatically
+      return <div>Updated UI</div>;
+    }
+    ```
+  </Step>
+  
+  <Step title="Test in browser">
+    Navigate to [http://localhost:4321](http://localhost:4321) - changes appear instantly.
+  </Step>
+  
+  <Step title="Add API routes">
+    Create new endpoints in `site/src/pages/api/`:
+    
+    ```typescript title="site/src/pages/api/myEndpoint.ts"
+    export async function GET({ request }) {
+      return new Response(JSON.stringify({ message: 'Hello' }));
+    }
+    ```
+  </Step>
+</Steps>
+
+### Graph Server Development
+
+<Steps>
+  <Step title="Modify API routes">
+    Edit routes in `graph-server/src/server/app.ts`:
+    
+    ```typescript title="graph-server/src/server/app.ts"
+    app.get('/my-endpoint', async (c) => {
+      return c.json({ data: 'test' });
+    });
+    ```
+  </Step>
+  
+  <Step title="Server auto-restarts">
+    The `--watch` flag restarts Node.js automatically on save.
+  </Step>
+  
+  <Step title="Test with curl">
+    ```bash
+    curl http://localhost:3001/my-endpoint
+    ```
+  </Step>
+</Steps>
+
+### Graph Frontend Development
+
+<Steps>
+  <Step title="Update components">
+    Edit React components in `graph-frontend/src/components/`:
+    
+    ```typescript title="graph-frontend/src/components/Graph.tsx"
+    export function Graph() {
+      // Changes hot-reload via Vite HMR
+      return <div>Updated graph</div>;
+    }
+    ```
+  </Step>
+  
+  <Step title="Modify graph algorithms">
+    Update utilities in `graph-frontend/src/lib/`:
+    
+    ```typescript title="graph-frontend/src/lib/graph-utils.ts"
+    export function myAlgorithm(graph) {
+      // New algorithm logic
+    }
+    ```
+  </Step>
+</Steps>
+
+## Database Management
+
+### Viewing Data
+
+<CodeGroup>
+```bash psql
+# Connect to Postgres
+psql postgresql://postgres:postgres@localhost:5432/graph
+
+# List tables
+\dt
+
+# Query nodes
+SELECT song_key, name, total_plays FROM nodes LIMIT 10;
+```
+
+```bash Docker
+# View logs
+docker logs graph-postgres
+
+# Restart database
+docker compose restart postgres
+```
+</CodeGroup>
+
+### Resetting Data
+
+<Warning>
+  This deletes all graph data. Only use during development.
+</Warning>
+
+```bash
+# Drop and recreate database
+psql postgresql://postgres:postgres@localhost:5432/postgres -c "DROP DATABASE graph;"
+psql postgresql://postgres:postgres@localhost:5432/postgres -c "CREATE DATABASE graph;"
+
+# Run migrations (if you have them)
+cd graph-server
+pnpm run migrate
+```
+
+## Testing Your Changes
+
+### Manual Testing
+
+<Steps>
+  <Step title="Test music player">
+    1. Open [http://localhost:4321](http://localhost:4321)
+    2. Click **Add Music**
+    3. Import a Bandcamp album
+    4. Verify playback works
+    5. Check IndexedDB cache in DevTools
+  </Step>
+  
+  <Step title="Test graph pipeline">
+    ```bash
+    # Queue a pipeline job
+    curl -X POST http://localhost:3001/pipeline/run \
+      -H "Content-Type: application/json" \
+      -d '{"username":"test_user"}'
+    
+    # Check job status
+    curl http://localhost:3001/pipeline/run/<jobId>
+    ```
+  </Step>
+  
+  <Step title="Test graph visualization">
+    1. Open [http://localhost:3000](http://localhost:3000)
+    2. Enter a Last.fm username
+    3. Wait for graph to load
+    4. Test search, node selection, depth sliders
+  </Step>
+</Steps>
+
+### Running Unit Tests
+
+<CodeGroup>
+```bash All Tests
+pnpm -r test
+```
+
+```bash Music Player
+cd site
+pnpm test
+```
+
+```bash Graph Server
+cd graph-server
+pnpm test
+```
+
+```bash Graph Frontend
+cd graph-frontend
+pnpm test
+```
+</CodeGroup>
+
+## Code Quality
+
+### Linting
+
+```bash
+# Lint all packages
+pnpm -r lint
+
+# Fix auto-fixable issues
+pnpm -r lint -- --fix
+```
+
+### Formatting
+
+```bash
+# Format all packages
+pnpm -r format
+
+# Check formatting without writing
+pnpm -r format -- --check
+```
+
+### Type Checking
+
+```bash
+# Type check all packages
+pnpm -r exec tsc --noEmit
+
+# Watch mode (continuous type checking)
+cd graph-server
+pnpm exec tsc --noEmit --watch
+```
+
+## Debugging
+
+### Browser DevTools
+
+<Tabs>
+  <Tab title="React DevTools">
+    Install the React DevTools extension:
+    - [Chrome](https://chrome.google.com/webstore/detail/react-developer-tools/fmkadmapgofadopljbjfkapdkoienihi)
+    - [Firefox](https://addons.mozilla.org/en-US/firefox/addon/react-devtools/)
+    
+    Inspect component state and props in the music player and graph frontend.
+  </Tab>
+  
+  <Tab title="TanStack Query Devtools">
+    The graph frontend includes TanStack Query devtools:
+    
+    ```typescript title="graph-frontend/src/router.tsx"
+    import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+    
+    <ReactQueryDevtools initialIsOpen={false} />
+    ```
+    
+    View query cache, refetch queries, and inspect loading states.
+  </Tab>
+  
+  <Tab title="IndexedDB Inspector">
+    1. Open DevTools (F12)
+    2. Go to **Application** tab
+    3. Expand **IndexedDB**
+    4. Explore `rotations-audio-cache` database
+  </Tab>
+</Tabs>
+
+### Server Debugging
+
+<CodeGroup>
+```bash Node Inspector
+# Start graph server with inspector
+cd graph-server
+node --inspect --watch --import tsx src/server/index.ts
+
+# Chrome: Navigate to chrome://inspect
+```
+
+```bash Logging
+# Add debug logs
+import { logger } from 'hono/logger';
+
+app.use('*', logger());
+
+# View request/response logs in terminal
+```
+</CodeGroup>
+
+## Common Development Tasks
+
+### Adding a New Music Source
+
+<Steps>
+  <Step title="Create API route">
+    ```typescript title="site/src/pages/api/newsource/scrape.ts"
+    export async function POST({ request }) {
+      const { url } = await request.json();
+      
+      // Scrape and return track data
+      return new Response(JSON.stringify({ tracks: [] }));
+    }
+    ```
+  </Step>
+  
+  <Step title="Add UI integration">
+    ```typescript title="site/src/components/AddMusicButton.tsx"
+    <button onClick={() => importFromNewSource()}>
+      Import from New Source
+    </button>
+    ```
+  </Step>
+  
+  <Step title="Update types">
+    ```typescript title="site/src/shared/types.ts"
+    export type MusicSource = 'bandcamp' | 'spotify' | 'youtube' | 'newsource';
+    ```
+  </Step>
+</Steps>
+
+### Adding a New API Endpoint
+
+<Steps>
+  <Step title="Define route">
+    ```typescript title="graph-server/src/server/app.ts"
+    app.get('/my-feature', async (c) => {
+      const user = c.req.query('user');
+      // Implementation
+      return c.json({ result: 'data' });
+    });
+    ```
+  </Step>
+  
+  <Step title="Add types">
+    ```typescript title="graph-server/src/graph/types.ts"
+    export interface MyFeatureResponse {
+      result: string;
+    }
+    ```
+  </Step>
+  
+  <Step title="Test endpoint">
+    ```bash
+    curl http://localhost:3001/my-feature?user=test
+    ```
+  </Step>
+</Steps>
+
+### Adding a Graph Algorithm
+
+<Steps>
+  <Step title="Implement algorithm">
+    ```typescript title="graph-server/src/analysis/my-algorithm.ts"
+    import { ListeningGraph } from '../graph/types';
+    
+    export function myAlgorithm(graph: ListeningGraph) {
+      // Algorithm implementation
+      return results;
+    }
+    ```
+  </Step>
+  
+  <Step title="Integrate in enrichment">
+    ```typescript title="graph-server/src/analysis/enrich.ts"
+    import { myAlgorithm } from './my-algorithm';
+    
+    export function enrichGraph(graph: ListeningGraph) {
+      const results = myAlgorithm(graph);
+      // Apply results to nodes
+    }
+    ```
+  </Step>
+  
+  <Step title="Visualize in frontend">
+    ```typescript title="graph-frontend/src/components/Graph.tsx"
+    // Use algorithm results for node styling
+    const size = node.myAlgorithmScore * 10;
+    ```
+  </Step>
+</Steps>
+
+## Performance Optimization
+
+### Music Player
+
+<CardGroup cols={2}>
+  <Card title="Audio Caching" icon="download">
+    Cache tracks immediately after first play to minimize network requests
+  </Card>
+  <Card title="TinyBase Indexes" icon="database">
+    Add indexes for frequently queried data
+  </Card>
+  <Card title="React Memoization" icon="memory">
+    Use `useMemo` and `useCallback` for expensive computations
+  </Card>
+  <Card title="Lazy Loading" icon="spinner">
+    Load playlist data on demand, not all at once
+  </Card>
+</CardGroup>
+
+### Graph Server
+
+<CardGroup cols={2}>
+  <Card title="Database Indexes" icon="database">
+    Index `user_id`, `song_key` for fast lookups
+  </Card>
+  <Card title="Pagination" icon="list">
+    Always paginate large result sets
+  </Card>
+  <Card title="Caching" icon="bolt">
+    Cache frequently accessed graphs in Redis
+  </Card>
+  <Card title="Connection Pooling" icon="server">
+    Use pg connection pool for Postgres
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Testing Guide" icon="vial" href="/developers/testing">
+    Write and run tests
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/developers/deployment">
+    Deploy to production
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/developers/architecture">
+    Understand the system design
+  </Card>
+  <Card title="API Reference" icon="terminal" href="/api/overview">
+    Explore all endpoints
+  </Card>
+</CardGroup>

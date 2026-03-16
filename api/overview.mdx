@@ -1,0 +1,84 @@
+---
+title: API Overview
+description: Introduction to the Rotations Graph API
+---
+
+The Rotations Graph API is a Hono-based REST API that serves listening graph data and manages data pipeline jobs for building personalized music recommendation graphs from Last.fm scrobble history.
+
+## Base URL
+
+The API runs on `http://localhost:3000` by default (configurable via environment variables).
+
+## Architecture
+
+The Graph API consists of two main functional groups:
+
+<CardGroup cols={2}>
+  <Card title="Graph API" icon="chart-network" href="/api/graph/get-graph">
+    Query and analyze your listening graph, including nodes, neighbors, statistics, and path finding
+  </Card>
+  <Card title="Pipeline API" icon="database" href="/api/pipeline/fetch-lastfm">
+    Fetch scrobble data from Last.fm, build graphs, and manage asynchronous pipeline jobs
+  </Card>
+</CardGroup>
+
+## Key Concepts
+
+### Song Keys
+
+Songs are identified by a canonical `SongKey` format:
+```
+lowercase(artist)::lowercase(track)
+```
+
+This enables cross-source matching regardless of minor formatting differences.
+
+### Node IDs
+
+Nodes are stored with UUID identifiers in the database. API responses use UUIDs for `next` and `previous` neighbor references.
+
+### Graph Structure
+
+The listening graph is a weighted directed graph where:
+- **Nodes** represent individual songs
+- **Edges** represent sequential listening transitions (Song A → Song B)
+- **Edge weights** represent the number of times a transition occurred
+
+### User Isolation
+
+All graph data is scoped to individual users via the `user` query parameter (required on most endpoints).
+
+## Response Format
+
+All endpoints return JSON responses with appropriate HTTP status codes:
+
+- `200 OK` - Successful request
+- `202 Accepted` - Pipeline job queued
+- `400 Bad Request` - Missing or invalid parameters
+- `404 Not Found` - User or resource not found
+- `500 Internal Server Error` - Server error
+
+## Error Handling
+
+Error responses follow this format:
+
+```json
+{
+  "error": "Description of what went wrong"
+}
+```
+
+## CORS
+
+The API has CORS enabled for all origins to support frontend consumption.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/api/authentication">
+    Learn about API authentication requirements
+  </Card>
+  <Card title="Graph Endpoints" icon="chart-network" href="/api/graph/get-graph">
+    Start querying your listening graph
+  </Card>
+</CardGroup>

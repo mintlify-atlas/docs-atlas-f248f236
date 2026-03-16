@@ -1,97 +1,74 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Welcome to Rotations"
+description: "A music player built from first principles with hand-curated rotations and listening graph visualization"
 ---
 
-## Setting up
+## What is Rotations?
 
-Get your documentation site up and running in minutes.
+Rotations is a music player that reimagines how you interact with your music library. It's **import-only** — meaning you add music once and it's forever persisted. Every song you listen to automatically becomes part of your **Current Rotation**, giving you better control over your daily music experience.
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Get Started" icon="rocket" href="/quickstart">
+    Set up Rotations and import your first music in minutes
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Core Concepts" icon="lightbulb" href="/concepts/rotations">
+    Learn about rotations and how they work
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Music Sources" icon="music" href="/sources/bandcamp">
+    Import music from Bandcamp, Spotify, YouTube, and more
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Graph Visualization" icon="chart-network" href="/features/graph-visualization">
+    Explore your listening patterns with interactive graphs
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Key Features
 
-Everything you need to create world-class documentation.
+<CardGroup cols={2}>
+  <Card title="Hand-Curated Rotations" icon="rotate">
+    Your current rotation determines what you listen to. Control the radius and discover songs outside your rotation.
+  </Card>
+  <Card title="Automatic Offline Mode" icon="download">
+    All playlists and music are downloaded automatically the first time they stream.
+  </Card>
+  <Card title="Multi-Rotation Support" icon="layer-group">
+    Create different rotations for different listening contexts and moods.
+  </Card>
+  <Card title="Listening Graph" icon="diagram-project">
+    Visualize your listening patterns as a directed, weighted graph with PageRank-based recommendations.
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Supported Music Sources
 
-## Need inspiration?
+<CardGroup cols={2}>
+  <Card title="Bandcamp" icon="bandcamp" href="/sources/bandcamp">
+    Import and stream music directly from Bandcamp
+  </Card>
+  <Card title="Spotify" icon="spotify" href="/sources/spotify">
+    Connect your Spotify account and import playlists
+  </Card>
+  <Card title="YouTube" icon="youtube" href="/sources/youtube">
+    Add YouTube videos to your library (in progress)
+  </Card>
+  <Card title="Last.fm" icon="lastfm" href="/sources/lastfm">
+    Build listening graphs from your scrobble history
+  </Card>
+</CardGroup>
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+## For Developers
+
+<CardGroup cols={2}>
+  <Card title="Setup Guide" icon="code" href="/developers/setup">
+    Set up your local development environment
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/developers/architecture">
+    Understand the system architecture and components
+  </Card>
+  <Card title="API Reference" icon="terminal" href="/api/overview">
+    Explore the Graph API and Pipeline endpoints
+  </Card>
+  <Card title="Contributing" icon="git" href="/developers/local-development">
+    Learn how to contribute to the project
+  </Card>
+</CardGroup>

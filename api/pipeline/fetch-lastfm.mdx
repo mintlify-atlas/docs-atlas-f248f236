@@ -1,0 +1,178 @@
+---
+title: Fetch Last.fm Data
+description: Fetch scrobble history from Last.fm
+---
+
+## Endpoint
+
+```
+POST /pipeline/fetch/lastfm
+```
+
+Fetches the complete scrobble history for a Last.fm user and stores it locally for graph building. This is the first step in the data pipeline.
+
+## Request Body
+
+<ParamField body="username" type="string" required>
+  The Last.fm username whose scrobble history to fetch
+</ParamField>
+
+## Response
+
+<ResponseField name="status" type="string">
+  Status of the fetch operation: `"complete"`
+</ResponseField>
+
+<ResponseField name="scrobbleCount" type="integer">
+  Total number of scrobbles fetched
+</ResponseField>
+
+<ResponseField name="logs" type="string[]">
+  Progress logs from the fetch operation
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+```bash cURL
+curl -X POST http://localhost:3000/pipeline/fetch/lastfm \
+  -H "Content-Type: application/json" \
+  -d '{"username": "johndoe"}'
+```
+
+```javascript JavaScript
+const response = await fetch('http://localhost:3000/pipeline/fetch/lastfm', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ username: 'johndoe' })
+});
+
+const data = await response.json();
+console.log(`Fetched ${data.scrobbleCount} scrobbles`);
+```
+
+```python Python
+import requests
+
+response = requests.post(
+    'http://localhost:3000/pipeline/fetch/lastfm',
+    json={'username': 'johndoe'}
+)
+
+data = response.json()
+print(f"Fetched {data['scrobbleCount']} scrobbles")
+```
+</CodeGroup>
+
+<CodeGroup>
+```json 200 Success
+{
+  "status": "complete",
+  "scrobbleCount": 15234,
+  "logs": [
+    "Fetching scrobbles for user: johndoe",
+    "Fetched page 1/153 (200 scrobbles)",
+    "Fetched page 2/153 (200 scrobbles)",
+    "...",
+    "Fetched 15234 total scrobbles",
+    "Saved to data/lastfm-scrobbles-johndoe.json"
+  ]
+}
+```
+
+```json 400 Bad Request (Missing Username)
+{
+  "error": "Missing required field: username"
+}
+```
+
+```json 500 Internal Server Error (Last.fm Error)
+{
+  "error": "Last.fm fetch failed: User not found"
+}
+```
+
+```json 500 Internal Server Error (API Key)
+{
+  "error": "Last.fm fetch failed: Invalid API key"
+}
+```
+</CodeGroup>
+
+## Process Details
+
+The fetch operation:
+
+1. **Verifies authentication** with the Last.fm API using your API key
+2. **Fetches scrobbles in batches** (200 per page) to respect rate limits
+3. **Logs progress** for each page fetched
+4. **Saves raw scrobbles** to `data/lastfm-scrobbles-{username}.json`
+5. **Creates or updates user** in the database
+
+## Data Stored
+
+Each scrobble contains:
+- Artist name
+- Track name
+- Album name (if available)
+- Timestamp (Unix timestamp)
+- MusicBrainz ID (if available)
+
+Example raw scrobble:
+```json
+{
+  "artist": "Radiohead",
+  "track": "Karma Police",
+  "album": "OK Computer",
+  "timestamp": 1710604800,
+  "mbid": "12345678-1234-1234-1234-123456789abc"
+}
+```
+
+## Rate Limiting
+
+Last.fm API rate limits:
+- 5 requests per second per API key (typical)
+- The fetcher implements automatic throttling
+- Large scrobble histories (>100k) may take 10+ minutes
+
+## Next Steps
+
+After fetching scrobbles:
+
+1. **Build the graph** using [POST /pipeline/build](/api/pipeline/build-graph)
+2. **Or run the full pipeline** using [POST /pipeline/run](/api/pipeline/run-pipeline)
+
+<CardGroup cols={2}>
+  <Card title="Build Graph" icon="diagram-project" href="/api/pipeline/build-graph">
+    Process scrobbles into a listening graph
+  </Card>
+  <Card title="Run Full Pipeline" icon="play" href="/api/pipeline/run-pipeline">
+    Fetch and build in one asynchronous job
+  </Card>
+</CardGroup>
+
+## Configuration
+
+<Note>
+Requires `LASTFM_API_KEY` environment variable to be set. See [Authentication](/api/authentication) for details.
+</Note>
+
+## Troubleshooting
+
+<Warning>
+Common issues:
+- **Invalid API key**: Check your `.env` file has the correct `LASTFM_API_KEY`
+- **User not found**: Verify the Last.fm username is correct and public
+- **Rate limiting**: If you see frequent errors, Last.fm may be rate-limiting your API key
+- **Timeout**: Very large scrobble histories may time out (use `/pipeline/run` for async processing)
+</Warning>
+
+## Notes
+
+<Note>
+- This endpoint is **synchronous** and may take several minutes for users with large scrobble histories
+- For large histories, consider using the async [POST /pipeline/run](/api/pipeline/run-pipeline) endpoint
+- Scrobble data is saved to the filesystem at `data/lastfm-scrobbles-{username}.json`
+- Re-fetching for the same user will overwrite previous data
+</Note>

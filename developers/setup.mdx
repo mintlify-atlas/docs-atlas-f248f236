@@ -1,0 +1,172 @@
+---
+title: "Development Setup"
+description: "Set up your local development environment for Rotations"
+---
+
+## Prerequisites
+
+Before you begin, ensure you have the following installed:
+
+<CardGroup cols={2}>
+  <Card title="Node.js" icon="node-js">
+    Version 20 or higher required
+  </Card>
+  <Card title="pnpm" icon="box">
+    Package manager (v10.28.0+)
+  </Card>
+  <Card title="Docker" icon="docker">
+    For running Postgres locally
+  </Card>
+  <Card title="Git" icon="git">
+    Version control system
+  </Card>
+</CardGroup>
+
+## Quick Start
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/cdxker/rotations.git
+    cd rotations
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    The project uses pnpm workspaces for managing multiple packages:
+    
+    ```bash
+    pnpm install
+    ```
+
+    This installs dependencies for all packages in the monorepo:
+    - `site/` - Astro music player
+    - `graph-server/` - Hono API server
+    - `graph-frontend/` - React graph visualization
+  </Step>
+
+  <Step title="Start Postgres database">
+    The graph server requires Postgres for storing listening graph data:
+    
+    ```bash
+    docker compose up -d
+    ```
+
+    This starts Postgres on `localhost:5432` with:
+    - Database: `graph`
+    - Username: `postgres`
+    - Password: `postgres`
+  </Step>
+
+  <Step title="Configure environment variables">
+    Create a `.env` file in the `graph-server` directory:
+    
+    ```bash
+    cd graph-server
+    cp .env.example .env
+    ```
+
+    Edit `.env` and set:
+    
+    ```env
+    LASTFM_API_KEY=your_api_key_here
+    DATABASE_URL=postgresql://postgres:postgres@localhost:5432/graph
+    GRAPH_SERVER_PORT=3001
+    ```
+
+    <Note>
+      Get your Last.fm API key from [https://www.last.fm/api/account/create](https://www.last.fm/api/account/create)
+    </Note>
+  </Step>
+
+  <Step title="Start development servers">
+    From the repo root, you can start all services:
+    
+    <CodeGroup>
+    ```bash All Services
+    pnpm dev:all
+    ```
+
+    ```bash Graph Only
+    pnpm dev
+    ```
+
+    ```bash Music Player Only
+    cd site
+    pnpm dev
+    ```
+    </CodeGroup>
+
+    This starts:
+    - Music player at `http://localhost:4321`
+    - Graph frontend at `http://localhost:3000`
+    - Graph server at `http://localhost:3001`
+  </Step>
+</Steps>
+
+## Verify Installation
+
+Check that all services are running:
+
+<Accordion title="Music Player">
+  Visit [http://localhost:4321](http://localhost:4321) - you should see the Rotations player interface.
+</Accordion>
+
+<Accordion title="Graph Server">
+  ```bash
+  curl http://localhost:3001/graph/stats?user=test
+  ```
+  
+  Should return a 404 (user not found) - this confirms the API is running.
+</Accordion>
+
+<Accordion title="Graph Frontend">
+  Visit [http://localhost:3000](http://localhost:3000) - you should see the graph visualization interface.
+</Accordion>
+
+## Common Issues
+
+<Warning>
+  **Postgres connection failed**
+  
+  Make sure Docker is running and Postgres is started:
+  ```bash
+  docker compose ps
+  docker compose up -d
+  ```
+</Warning>
+
+<Warning>
+  **Port already in use**
+  
+  If a port is already taken, you can change it:
+  - Music player: Edit `site/astro.config.mjs`
+  - Graph server: Set `GRAPH_SERVER_PORT` in `.env`
+  - Graph frontend: Edit `graph-frontend/package.json` dev script
+</Warning>
+
+<Warning>
+  **pnpm not found**
+  
+  Install pnpm globally:
+  ```bash
+  npm install -g pnpm@10.28.0
+  ```
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="sitemap" href="/developers/architecture">
+    Understand the system architecture
+  </Card>
+  <Card title="Project Structure" icon="folder-tree" href="/developers/project-structure">
+    Learn about the codebase organization
+  </Card>
+  <Card title="Local Development" icon="code" href="/developers/local-development">
+    Start developing features
+  </Card>
+  <Card title="Testing" icon="vial" href="/developers/testing">
+    Run and write tests
+  </Card>
+</CardGroup>
